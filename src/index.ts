@@ -500,8 +500,10 @@ async function mergeReal(request: Request, env: Env, taskId: string): Promise<Re
 
   // Merge the winner's commit into main
   const winnerOid = winner.commit_sha;
+  // Ensure we are on main (clone with ref:main should do this, but be explicit)
+  await git.checkout({ fs: fsArg, dir, ref: "main" });
   await git.merge({
-    fs: fsArg, dir, theirs: winnerOid,
+    fs: fsArg, dir, ours: "main", theirs: winnerOid,
     author: { name: "trivium-dispatcher", email: "dispatcher@trivium.local" },
   });
 
