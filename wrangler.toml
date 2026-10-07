@@ -26,3 +26,7 @@ class_name = "ReviewGate"
 [[artifacts]]
 binding = "ARTIFACTS"
 namespace = "trivium"
+
+# Resolve isomorphic-git subpath for the Workers bundler
+[alias]
+"isomorphic-git/http/web" = "./node_modules/isomorphic-git/http/web/index.js"
