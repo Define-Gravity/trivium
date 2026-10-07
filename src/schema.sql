@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   repo TEXT NOT NULL,
   instructions TEXT NOT NULL,
+  constraints TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'pending',
   budget_tokens INTEGER NOT NULL,
   spent_tokens INTEGER NOT NULL DEFAULT 0,
