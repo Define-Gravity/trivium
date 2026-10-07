@@ -412,6 +412,7 @@ async function createProject(request: Request, env: Env): Promise<Response> {
 
 // Import a GitHub repo into the project's Artifacts repo via .import().
 async function importProject(request: Request, env: Env, projectId: string): Promise<Response> {
+  try {
   let body: ImportRequest;
   try {
     body = await request.json();
@@ -441,6 +442,11 @@ async function importProject(request: Request, env: Env, projectId: string): Pro
   }
 
   return json({ project_id: projectId, imported_from: body.github_url });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("importProject failed:", msg);
+    return json({ error: "import failed", detail: msg }, 500);
+  }
 }
 
 // Real merge: clone project main, merge winner's commit, push merge commit
