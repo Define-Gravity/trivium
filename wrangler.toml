@@ -1,0 +1,28 @@
+name = "trivium"
+main = "src/index.ts"
+compatibility_date = "2026-10-06"
+
+# D1: tamper-evident audit ledger + task state
+[[d1_databases]]
+binding = "LEDGER_DB"
+database_name = "trivium-ledger"
+database_id = "REPLACE_AFTER_WRANGLER_D1_CREATE"
+
+# Durable Object: single-writer merge coordinator
+[durable_objects]
+bindings = [{ name = "MERGE_COORDINATOR", class_name = "MergeCoordinator" }]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MergeCoordinator"]
+
+# Workflow: sequential review gate (tests -> scans -> tier -> merge/escalate)
+[[workflows]]
+binding = "REVIEW_GATE"
+name = "review-gate"
+class_name = "ReviewGate"
+
+# Artifacts: uncomment after creating the namespace
+# [[artifacts]]
+# binding = "ARTIFACTS"
+# namespace = "trivium"
