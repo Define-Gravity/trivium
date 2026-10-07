@@ -289,6 +289,10 @@ export default {
     if (request.method === "POST" && importMatch) {
       return importProject(request, env, importMatch[1]);
     }
+    const remoteMatch = url.pathname.match(/^\/projects\/([a-zA-Z0-9-]+)\/remote$/);
+    if (request.method === "GET" && remoteMatch) {
+      return projectRemote(env, remoteMatch[1]);
+    }
 
     return json({ error: "not found" }, 404);
   },
@@ -446,6 +450,30 @@ async function importProject(request: Request, env: Env, projectId: string): Pro
     const msg = e instanceof Error ? e.message : String(e);
     console.error("importProject failed:", msg);
     return json({ error: "import failed", detail: msg }, 500);
+  }
+}
+
+// Returns the git remote URL and a short-lived write token for a project.
+// Used to push an existing repo (e.g. from GitHub) into the project.
+async function projectRemote(env: Env, projectId: string): Promise<Response> {
+  try {
+    const project = await env.LEDGER_DB.prepare(
+      "SELECT repo_name FROM projects WHERE id = ?"
+    ).bind(projectId).first() as { repo_name: string } | null;
+    if (!project) return json({ error: "project not found" }, 404);
+
+    const repo = await env.ARTIFACTS.get(project.repo_name);
+    if (!repo) return json({ error: "project repo not found" }, 404);
+
+    const { remote } = await repo.info() as { remote: string };
+    const tokenResult = await repo.createToken("write", 900);
+    const token = (tokenResult.plaintext as string).split("?expires=")[0];
+
+    return json({ remote, token, expires_in: 900 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("projectRemote failed:", msg);
+    return json({ error: "failed", detail: msg }, 500);
   }
 }
 
