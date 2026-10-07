@@ -41,16 +41,13 @@ export class MemoryFS {
     ["/", { kind: "dir", children: new Set(), mtimeMs: Date.now() }],
   ]);
 
-  promises = {
-    readFile: this.readFile.bind(this),
-    writeFile: this.writeFile.bind(this),
-    unlink: this.unlink.bind(this),
-    readdir: this.readdir.bind(this),
-    mkdir: this.mkdir.bind(this),
-    rmdir: this.rmdir.bind(this),
-    stat: this.stat.bind(this),
-    lstat: this.lstat.bind(this),
-  };
+  // isomorphic-git checks for fs.promises and uses it exclusively if present.
+  // A getter returning `this` keeps the method list in sync automatically:
+  // any method added to the class is visible via fs.promises without
+  // maintaining a separate dictionary.
+  get promises(): this {
+    return this;
+  }
 
   // Stubs for isomorphic-git. We never create symlinks, but the binder
   // requires these methods to exist.
