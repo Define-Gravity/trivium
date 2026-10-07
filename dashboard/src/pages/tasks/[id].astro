@@ -49,7 +49,7 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
   <div class="container">
     <header>
       <div>
-        <h1><a href="/" style="color: inherit;">&larr;</a> {task?.task.repo ?? "Task"}</h1>
+        <h1><a href="/" style="color: inherit;">←</a> {task?.task.repo ?? "Task"}</h1>
         <p>{task?.task.instructions}</p>
       </div>
       {task && <span class={`badge badge-${task.task.status}`}>{task.task.status}</span>}
@@ -91,7 +91,7 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
               <p class="fork-detail">Repo: {f.repo_name}</p>
               <p class="fork-detail">Token expires: {formatDate(f.token_expiry)}</p>
               {f.completed_at && <p class="fork-detail">Completed: {formatDate(f.completed_at)}</p>}
-              {f.status === "merged" && <p style="color: var(--green); font-weight: 600;">&#10003; Selected</p>}
+              {f.status === "merged" && <p style="color: var(--green); font-weight: 600;">✓ Selected</p>}
             </div>
           ))}
         </div>
@@ -100,7 +100,7 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
           Audit ledger
           {ledger && (
             <span class={`verify ${ledger.valid ? "ok" : "bad"}`} style="margin-left: 0.75rem;">
-              {ledger.valid ? "&#10003; chain valid" : "&#10007; chain broken"}
+              {ledger.valid ? "✓ chain valid" : "✗ chain broken"}
             </span>
           )}
         </h2>
