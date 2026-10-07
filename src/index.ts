@@ -87,12 +87,17 @@ export default {
       ).bind(completeMatch[1]).first();
       if (!fork) return json({ error: "fork not found" }, 404);
 
+      const commitSha = body.commit_sha ?? "unknown";
+      await env.LEDGER_DB.prepare(
+        "UPDATE forks SET commit_sha = ?, status = 'completed', completed_at = ? WHERE id = ?"
+      ).bind(commitSha, Math.floor(Date.now() / 1000), fork.id).run();
+
       const stub = env.MERGE_COORDINATOR.get(env.MERGE_COORDINATOR.idFromName(fork.task_id as string));
       const result = await stub.submitFork(fork.task_id as string, {
         forkId: fork.id as string,
         agentId: fork.agent_id as string,
         branch: "main",
-        commitSha: body.commit_sha ?? "unknown",
+        commitSha,
       });
       return json(result);
     }
@@ -100,7 +105,7 @@ export default {
     if (request.method === "POST" && reviewMatch) {
       const taskId = reviewMatch[1];
       const forks = await env.LEDGER_DB.prepare(
-        "SELECT id, agent_id, repo_name FROM forks WHERE task_id = ? AND status = 'completed'"
+        "SELECT id, agent_id, repo_name, commit_sha FROM forks WHERE task_id = ? AND status = 'completed'"
       ).bind(taskId).all();
 
       // Run the review inline. Workflows do not execute in local dev,
@@ -109,10 +114,41 @@ export default {
       // risk, then approve, quarantine, or escalate. The ReviewGate
       // Workflow class remains for deployed environments.
       const { runAllScans } = await import("./scanners");
+      const { writeReviewNote } = await import("./notes");
       const reviewed: { forkId: string; status: string }[] = [];
 
+      // Write a review note to the agent's commit in the fork repo.
+      // Notes are the post-hoc record: verbose, immutable-ish, and readable
+      // via git. The dispatcher writes them, agents cannot forge them.
+      async function recordNote(
+        f: { id: string; agent_id: string; repo_name: string; commit_sha: string | null },
+        passed: boolean,
+        findings: string[],
+        tier: "standard" | "high",
+        decision: "approved" | "quarantined" | "awaiting_human"
+      ) {
+        if (!f.commit_sha || f.commit_sha === "unknown") return;
+        try {
+          await writeReviewNote(env, f.repo_name, f.commit_sha, {
+            task_id: taskId,
+            fork_id: f.id,
+            agent_id: f.agent_id,
+            commit_sha: f.commit_sha,
+            passed,
+            findings,
+            risk_tier: tier,
+            decision,
+            reviewed_at: Math.floor(Date.now() / 1000),
+          });
+        } catch (e) {
+          // Notes are best-effort. The D1 ledger remains the source of truth
+          // for review outcomes; a failed note write must not block the gate.
+          console.error(`note write failed for ${f.id}:`, e);
+        }
+      }
+
       for (const fork of forks.results) {
-        const f = fork as { id: string; agent_id: string; repo_name: string };
+        const f = fork as { id: string; agent_id: string; repo_name: string; commit_sha: string | null };
 
         // Fetch
         const repo = await env.ARTIFACTS.get(f.repo_name);
@@ -143,6 +179,7 @@ export default {
             actor: "review-gate",
             details: { forkId: f.id, agentId: f.agent_id, reason: scanResult.findings },
           });
+          await recordNote(f, false, scanResult.findings, "standard", "quarantined");
           reviewed.push({ forkId: f.id, status: "quarantined" });
           continue;
         }
@@ -165,6 +202,7 @@ export default {
             actor: "review-gate",
             details: { forkId: f.id, agentId: f.agent_id, reason: "high-risk path requires human review" },
           });
+          await recordNote(f, true, scanResult.findings, "high", "awaiting_human");
           reviewed.push({ forkId: f.id, status: "awaiting_human" });
           continue;
         }
@@ -177,6 +215,7 @@ export default {
           actor: "review-gate",
           details: { forkId: f.id, agentId: f.agent_id, branch: "main" },
         });
+        await recordNote(f, true, scanResult.findings, tierName, "approved");
         reviewed.push({ forkId: f.id, status: "approved" });
       }
 

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS forks (
   agent_id TEXT NOT NULL,
   repo_name TEXT NOT NULL,
   token_expiry INTEGER NOT NULL,
+  commit_sha TEXT,
   status TEXT NOT NULL DEFAULT 'running',
   created_at INTEGER NOT NULL,
   completed_at INTEGER
