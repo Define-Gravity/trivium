@@ -1,15 +1,17 @@
 ---
 // Task detail: forks, pipeline actions, audit ledger.
 // All data fetched server-side. Actions POST back to this page.
-import { api } from "../../lib/api";
+import { createApi } from "../../lib/api";
+
+const api = createApi((Astro.locals as any).runtime.env.TRIVIUM_API);
 import "../../styles/global.css";
 
 const { id } = Astro.params;
 if (!id) return Astro.redirect("/");
 
 let error: string | null = null;
-let task: Awaited<ReturnType<typeof api.getTask>> | null = null;
-let ledger: Awaited<ReturnType<typeof api.getLedger>> | null = null;
+let task: Awaited<ReturnType<ReturnType<typeof createApi>["getTask"]>> | null = null;
+let ledger: Awaited<ReturnType<ReturnType<typeof createApi>["getLedger"]>> | null = null;
 
 // Handle action POSTs
 if (Astro.request.method === "POST") {

@@ -1,9 +1,11 @@
 ---
 // Task list page. Server-rendered from the Trivium API.
-import { api } from "../lib/api";
+import { createApi } from "../lib/api";
+
+const api = createApi((Astro.locals as any).runtime.env.TRIVIUM_API);
 import "../styles/global.css";
 
-let tasks: Awaited<ReturnType<typeof api.listTasks>> = [];
+let tasks: Awaited<ReturnType<ReturnType<typeof createApi>["listTasks"]>> = [];
 let error: string | null = null;
 
 try {
