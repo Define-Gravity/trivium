@@ -52,10 +52,10 @@ export class MemoryFS {
   // Stubs for isomorphic-git. We never create symlinks, but the binder
   // requires these methods to exist.
   async readlink(_path: string): Promise<string> {
-    throw new Error("ENOSYS: readlink not supported");
+    throw this.fsError("ENOSYS", _path);
   }
   async symlink(_target: string, _path: string): Promise<void> {
-    throw new Error("ENOSYS: symlink not supported");
+    throw this.fsError("ENOSYS", _path);
   }
 
   normalize(input: string) {
@@ -87,15 +87,23 @@ export class MemoryFS {
     return this.entries.get(this.normalize(path));
   }
 
+  // Create an error with a .code property so isomorphic-git's exists()
+  // recognizes ENOENT/ENOTDIR instead of re-throwing as unhandled.
+  fsError(code: string, path: string): Error {
+    const e = new Error(`${code}: ${path}`) as Error & { code: string };
+    e.code = code;
+    return e;
+  }
+
   requireEntry(path: string) {
     const entry = this.getEntry(path);
-    if (!entry) throw new Error(`ENOENT: ${path}`);
+    if (!entry) throw this.fsError("ENOENT", path);
     return entry;
   }
 
   requireDir(path: string) {
     const entry = this.requireEntry(path);
-    if (entry.kind !== "dir") throw new Error(`ENOTDIR: ${path}`);
+    if (entry.kind !== "dir") throw this.fsError("ENOTDIR", path);
     return entry;
   }
 
@@ -105,7 +113,7 @@ export class MemoryFS {
     const recursive = typeof options === "object" && options !== null && options.recursive;
     const parent = this.parent(target);
     if (!this.entries.has(parent)) {
-      if (!recursive) throw new Error(`ENOENT: ${parent}`);
+      if (!recursive) throw this.fsError("ENOENT", parent);
       await this.mkdir(parent, { recursive: true });
     }
     if (this.entries.has(target)) return;
@@ -128,7 +136,7 @@ export class MemoryFS {
 
   async readFile(path: string, options?: string | { encoding?: string }) {
     const entry = this.requireEntry(path);
-    if (entry.kind !== "file") throw new Error(`EISDIR: ${path}`);
+    if (entry.kind !== "file") throw this.fsError("EISDIR", path);
     const encoding = typeof options === "string" ? options : options?.encoding;
     return encoding ? this.decoder.decode(entry.data) : entry.data;
   }
@@ -140,7 +148,7 @@ export class MemoryFS {
   async unlink(path: string) {
     const target = this.normalize(path);
     const entry = this.requireEntry(target);
-    if (entry.kind !== "file") throw new Error(`EISDIR: ${path}`);
+    if (entry.kind !== "file") throw this.fsError("EISDIR", path);
     this.entries.delete(target);
     this.requireDir(this.parent(target)).children.delete(this.basename(target));
   }
@@ -148,7 +156,7 @@ export class MemoryFS {
   async rmdir(path: string) {
     const target = this.normalize(path);
     const entry = this.requireDir(target);
-    if (entry.children.size > 0) throw new Error(`ENOTEMPTY: ${path}`);
+    if (entry.children.size > 0) throw this.fsError("ENOTEMPTY", path);
     this.entries.delete(target);
     this.requireDir(this.parent(target)).children.delete(this.basename(target));
   }
