@@ -1,8 +1,9 @@
 ---
 // Task list page. Server-rendered from the Trivium API.
 import { createApi } from "../lib/api";
+import { env } from "cloudflare:workers";
 
-const api = createApi((Astro.locals as any).runtime.env.TRIVIUM_API);
+const api = createApi(env.TRIVIUM_API as any);
 import "../styles/global.css";
 
 let tasks: Awaited<ReturnType<ReturnType<typeof createApi>["listTasks"]>> = [];

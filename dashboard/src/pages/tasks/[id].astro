@@ -2,8 +2,9 @@
 // Task detail: forks, pipeline actions, audit ledger.
 // All data fetched server-side. Actions POST back to this page.
 import { createApi } from "../../lib/api";
+import { env } from "cloudflare:workers";
 
-const api = createApi((Astro.locals as any).runtime.env.TRIVIUM_API);
+const api = createApi(env.TRIVIUM_API as any);
 import "../../styles/global.css";
 
 const { id } = Astro.params;
