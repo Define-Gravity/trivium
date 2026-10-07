@@ -1,0 +1,316 @@
+/* Trivium dashboard. Pure CSS, no framework.
+   Design: dark, dense, technical. Status colors carry meaning. */
+
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+header p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge-pending { background: #30363d; color: var(--muted); }
+.badge-running { background: #1f3a5f; color: var(--accent); }
+.badge-review { background: #3d2f0b; color: var(--yellow); }
+.badge-completed { background: #0f2e1a; color: var(--green); }
+.badge-approved { background: #0f2e1a; color: var(--green); }
+.badge-quarantined { background: #3d1113; color: var(--red); }
+.badge-awaiting_human { background: #2e1a3d; color: var(--purple); }
+.badge-merged { background: #0f2e1a; color: var(--green); border: 1px solid var(--green); }
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.card h2, .card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+/* Task list */
+.task-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.task-row:hover { border-color: var(--accent); }
+
+.task-meta { color: var(--muted); font-size: 0.8rem; }
+.task-id { font-size: 0.75rem; color: var(--muted); }
+
+/* Fork grid */
+.fork-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.fork-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+.fork-card.winner {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px var(--green);
+}
+
+.fork-card h3 {
+  margin: 0 0 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fork-detail {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.25rem 0;
+  word-break: break-all;
+}
+
+/* Pipeline stages */
+.pipeline {
+  display: flex;
+  gap: 0;
+  margin-bottom: 2rem;
+  overflow-x: auto;
+}
+
+.stage {
+  flex: 1;
+  min-width: 140px;
+  text-align: center;
+  padding: 0.75rem 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: none;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.stage:first-child {
+  border-left: 1px solid var(--border);
+  border-radius: 8px 0 0 8px;
+}
+
+.stage:last-child { border-radius: 0 8px 8px 0; }
+
+.stage.active {
+  background: #1f3a5f;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.stage.done {
+  background: #0f2e1a;
+  color: var(--green);
+}
+
+/* Ledger timeline */
+.timeline {
+  position: relative;
+  padding-left: 1.5rem;
+}
+
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.event {
+  position: relative;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.event::before {
+  content: "";
+  position: absolute;
+  left: -1.5rem;
+  top: 1.1rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  margin-left: 2px;
+}
+
+.event-type {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.event-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.event-hash {
+  font-size: 0.7rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+/* Forms */
+form.create-task {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.form-row { margin-bottom: 1rem; }
+
+label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+input[type="text"],
+input[type="number"],
+textarea {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+textarea { min-height: 80px; resize: vertical; }
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  padding: 0.6rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.btn:hover { border-color: var(--accent); }
+
+.btn-primary {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+}
+
+.btn-primary:hover { background: #388bfd; border-color: #388bfd; }
+
+.btn-danger {
+  background: #3d1113;
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+}
+
+/* Verify badge */
+.verify {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+}
+
+.verify.ok { background: #0f2e1a; color: var(--green); }
+.verify.bad { background: #3d1113; color: var(--red); }

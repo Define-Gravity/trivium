@@ -1,0 +1,9 @@
+name = "trivium-dashboard"
+compatibility_date = "2026-10-06"
+
+# Build with: npm run build
+# Deploy with: npm run deploy
+#
+# The dashboard calls the Trivium API. Set the URL at deploy time:
+#   npx wrangler secret put PUBLIC_TRIVIUM_API
+# For local dev, create a .env file with PUBLIC_TRIVIUM_API=http://localhost:8787

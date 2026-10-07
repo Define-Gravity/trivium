@@ -1,0 +1,88 @@
+---
+// Task list page. Server-rendered from the Trivium API.
+import { api } from "../lib/api";
+import "../styles/global.css";
+
+let tasks: Awaited<ReturnType<typeof api.listTasks>> = [];
+let error: string | null = null;
+
+try {
+  tasks = await api.listTasks();
+} catch (e) {
+  error = e instanceof Error ? e.message : "Failed to load tasks";
+}
+
+// Handle the create form POST
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const repo = String(form.get("repo") ?? "").trim();
+  const instructions = String(form.get("instructions") ?? "").trim();
+  const agent_count = Math.min(Math.max(parseInt(String(form.get("agent_count") ?? "3"), 10) || 3, 1), 5);
+
+  if (repo && instructions) {
+    try {
+      const { task_id } = await api.createTask(repo, instructions, agent_count);
+      return Astro.redirect(`/tasks/${task_id}`);
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Failed to create task";
+    }
+  } else {
+    error = "Repository name and instructions are required.";
+  }
+}
+
+const formatDate = (epoch: number) =>
+  new Date(epoch * 1000).toLocaleString();
+---
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trivium — Parallel Agent Pipeline</title>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Trivium</h1>
+        <p>One task in. N agents. One audited result.</p>
+      </div>
+    </header>
+
+    {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
+
+    <form class="create-task" method="POST">
+      <h2 style="margin-top: 0;">New task</h2>
+      <div class="form-row">
+        <label for="repo">Repository name</label>
+        <input type="text" id="repo" name="repo" required maxlength="64" placeholder="my-project" />
+      </div>
+      <div class="form-row">
+        <label for="instructions">Instructions for agents</label>
+        <textarea id="instructions" name="instructions" required maxlength="2000" placeholder="Describe what the agents should build..."></textarea>
+      </div>
+      <div class="form-row">
+        <label for="agent_count">Agents (1-5)</label>
+        <input type="number" id="agent_count" name="agent_count" value="3" min="1" max="5" />
+      </div>
+      <button type="submit" class="btn btn-primary">Dispatch agents</button>
+    </form>
+
+    <h2>Tasks</h2>
+    {tasks.length === 0 && !error && (
+      <div class="card"><p style="color: var(--muted); margin: 0;">No tasks yet. Dispatch one above.</p></div>
+    )}
+    {tasks.map((t) => (
+      <a href={`/tasks/${t.id}`} class="task-row" style="text-decoration: none; color: inherit; display: flex;">
+        <div>
+          <div><strong>{t.repo}</strong></div>
+          <div class="task-meta">{t.agent_count} agents &middot; {formatDate(t.created_at)}</div>
+          <div class="task-id">{t.id}</div>
+        </div>
+        <span class={`badge badge-${t.status}`}>{t.status}</span>
+      </a>
+    ))}
+  </div>
+</body>
+</html>

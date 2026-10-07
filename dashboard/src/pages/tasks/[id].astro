@@ -1,0 +1,122 @@
+---
+// Task detail: forks, pipeline actions, audit ledger.
+// All data fetched server-side. Actions POST back to this page.
+import { api } from "../../lib/api";
+import "../../styles/global.css";
+
+const { id } = Astro.params;
+if (!id) return Astro.redirect("/");
+
+let error: string | null = null;
+let task: Awaited<ReturnType<typeof api.getTask>> | null = null;
+let ledger: Awaited<ReturnType<typeof api.getLedger>> | null = null;
+
+// Handle action POSTs
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const action = String(form.get("action") ?? "");
+  try {
+    if (action === "review") await api.runReview(id);
+    if (action === "merge") await api.merge(id);
+  } catch (e) {
+    error = e instanceof Error ? e.message : "Action failed";
+  }
+}
+
+try {
+  task = await api.getTask(id);
+  ledger = await api.getLedger(id);
+} catch (e) {
+  error = e instanceof Error ? e.message : "Failed to load task";
+}
+
+const stages = ["pending", "running", "review", "completed"];
+const currentStage = task ? stages.indexOf(task.task.status) : -1;
+const formatDate = (epoch: number) => new Date(epoch * 1000).toLocaleString();
+const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
+---
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trivium — {task?.task.repo ?? "Task"}</title>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1><a href="/" style="color: inherit;">&larr;</a> {task?.task.repo ?? "Task"}</h1>
+        <p>{task?.task.instructions}</p>
+      </div>
+      {task && <span class={`badge badge-${task.task.status}`}>{task.task.status}</span>}
+    </header>
+
+    {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
+
+    {task && (
+      <>
+        <div class="pipeline">
+          {stages.map((s, i) => (
+            <div class={`stage ${i === currentStage ? "active" : ""} ${i < currentStage ? "done" : ""}`}>
+              {s}
+            </div>
+          ))}
+        </div>
+
+        {task.task.status === "review" && (
+          <div class="actions">
+            <form method="POST" style="display: inline;">
+              <input type="hidden" name="action" value="review" />
+              <button type="submit" class="btn btn-primary">Run review gates</button>
+            </form>
+            <form method="POST" style="display: inline;">
+              <input type="hidden" name="action" value="merge" />
+              <button type="submit" class="btn">Merge winner</button>
+            </form>
+          </div>
+        )}
+
+        <h2>Agent forks ({task.forks.length})</h2>
+        <div class="fork-grid">
+          {task.forks.map((f) => (
+            <div class={`fork-card ${f.status === "merged" ? "winner" : ""}`}>
+              <h3>
+                {f.agent_id}
+                <span class={`badge badge-${f.status}`}>{f.status}</span>
+              </h3>
+              <p class="fork-detail">Repo: {f.repo_name}</p>
+              <p class="fork-detail">Token expires: {formatDate(f.token_expiry)}</p>
+              {f.completed_at && <p class="fork-detail">Completed: {formatDate(f.completed_at)}</p>}
+              {f.status === "merged" && <p style="color: var(--green); font-weight: 600;">&#10003; Selected</p>}
+            </div>
+          ))}
+        </div>
+
+        <h2>
+          Audit ledger
+          {ledger && (
+            <span class={`verify ${ledger.valid ? "ok" : "bad"}`} style="margin-left: 0.75rem;">
+              {ledger.valid ? "&#10003; chain valid" : "&#10007; chain broken"}
+            </span>
+          )}
+        </h2>
+        <div class="card">
+          <div class="timeline">
+            {ledger?.events.map((e) => (
+              <div class="event">
+                <div class="event-type">{e.event_type}</div>
+                <div class="event-meta">
+                  {e.actor} &middot; {formatDate(e.created_at)}
+                </div>
+                <div class="event-meta">{e.details.slice(0, 160)}{e.details.length > 160 ? "..." : ""}</div>
+                <div class="event-hash">{shortHash(e.hash)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </>
+    )}
+  </div>
+</body>
+</html>
