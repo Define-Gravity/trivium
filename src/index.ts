@@ -2,6 +2,10 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { appendLedger, verifyLedger } from "./ledger";
 import { checkBudget } from "./governor";
 
+export { MergeCoordinator } from "./coordinator";
+export { ReviewGate } from "./review";
+
+
 // Dispatcher: the entry point. Creates tasks, forks repos, serves the dashboard.
 // POST /task        create a task (body: repo, instructions, budget_tokens)
 // GET  /tasks       list tasks
@@ -12,7 +16,7 @@ interface Env {
   LEDGER_DB: D1Database;
   MERGE_COORDINATOR: DurableObjectNamespace;
   REVIEW_GATE: Workflow;
-  // ARTIFACTS: ArtifactsBinding; // uncomment after namespace creation
+  ARTIFACTS: Artifacts;
 }
 
 interface TaskRequest {
@@ -93,23 +97,37 @@ async function createTask(request: Request, env: Env): Promise<Response> {
     details: { repo: body.repo, budget_tokens: budget, agent_count: agentCount },
   });
 
-  // Fork the repo once per agent. Each fork gets a short-lived write token.
-  // Artifacts binding wiring goes here after namespace creation.
-  const now2 = Math.floor(Date.now() / 1000);
-  for (let i = 0; i < agentCount; i++) {
-    const forkId = crypto.randomUUID();
-    const agentId = `agent-${i + 1}`;
-    await env.LEDGER_DB.prepare(
-      "INSERT INTO forks (id, task_id, agent_id, repo_name, token_expiry, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-    ).bind(forkId, taskId, agentId, `${body.repo}-fork-${i + 1}`, now2 + TOKEN_TTL_SECONDS, now2).run();
 
-    await appendLedger(env.LEDGER_DB, {
-      task_id: taskId,
-      event_type: "fork.created",
-      actor: "dispatcher",
-      details: { forkId, agentId, token_ttl_seconds: TOKEN_TTL_SECONDS },
-    });
-  }
+// Create the baseline repo, then fork it once per agent.
+// Each fork gets a short-lived repo-scoped write token.
+const shortId = taskId.slice(0, 8);
+const baselineName = `${body.repo}-baseline-${shortId}`;
+await env.ARTIFACTS.create(baselineName, { setDefaultBranch: "main" });
+const baseline = await env.ARTIFACTS.get(baselineName);
+if (!baseline) throw new Error("baseline repo not found after create");
+
+const now2 = Math.floor(Date.now() / 1000);
+for (let i = 0; i < agentCount; i++) {
+  const forkId = crypto.randomUUID();
+  const agentId = `agent-${i + 1}`;
+  const forkName = `${body.repo}-fork-${i + 1}-${shortId}`;
+  await baseline.fork(forkName, { defaultBranchOnly: true });
+  const forkHandle = await env.ARTIFACTS.get(forkName);
+  if (!forkHandle) throw new Error(`fork ${forkName} not found after fork`);
+  const token = await forkHandle.createToken("write", TOKEN_TTL_SECONDS);
+
+  await env.LEDGER_DB.prepare(
+    "INSERT INTO forks (id, task_id, agent_id, repo_name, token, token_expiry, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(forkId, taskId, agentId, forkName, JSON.stringify(token), now2 + TOKEN_TTL_SECONDS, now2).run();
+
+  await appendLedger(env.LEDGER_DB, {
+    task_id: taskId,
+    event_type: "fork.created",
+    actor: "dispatcher",
+    details: { forkId, agentId, repo: forkName, token_ttl_seconds: TOKEN_TTL_SECONDS },
+  });
+}
+
 
   await env.LEDGER_DB.prepare("UPDATE tasks SET status = 'running' WHERE id = ?").bind(taskId).run();
 

@@ -6,7 +6,7 @@ compatibility_date = "2026-10-06"
 [[d1_databases]]
 binding = "LEDGER_DB"
 database_name = "trivium-ledger"
-database_id = "REPLACE_AFTER_WRANGLER_D1_CREATE"
+database_id = "7b3034d6-a67a-47a8-8583-6e6e7e7af83b"
 
 # Durable Object: single-writer merge coordinator
 [durable_objects]
@@ -23,6 +23,7 @@ name = "review-gate"
 class_name = "ReviewGate"
 
 # Artifacts: uncomment after creating the namespace
-# [[artifacts]]
-# binding = "ARTIFACTS"
-# namespace = "trivium"
+ [[artifacts]]
+ binding = "ARTIFACTS"
+ namespace = "trivium"
+ remote = true
