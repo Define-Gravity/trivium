@@ -11,9 +11,13 @@ interface ApiOptions {
   body?: unknown;
 }
 
+// Service bindings require a full URL. The host is ignored;
+// the binding routes to the bound Worker regardless.
+const INTERNAL_BASE = 'https://trivium.internal';
+
 export function createApi(binding: { fetch: typeof fetch }) {
   async function request<T>(path: string, opts: ApiOptions = {}): Promise<T> {
-    const res = await binding.fetch(path, {
+    const res = await binding.fetch(INTERNAL_BASE + path, {
       method: opts.method ?? "GET",
       headers: { "Content-Type": "application/json" },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
