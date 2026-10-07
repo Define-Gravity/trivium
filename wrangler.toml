@@ -14,7 +14,7 @@ bindings = [{ name = "MERGE_COORDINATOR", class_name = "MergeCoordinator" }]
 
 [[migrations]]
 tag = "v1"
-new_classes = ["MergeCoordinator"]
+new_sqlite_classes = ["MergeCoordinator"]
 
 # Workflow: sequential review gate (tests -> scans -> tier -> merge/escalate)
 [[workflows]]
@@ -23,7 +23,6 @@ name = "review-gate"
 class_name = "ReviewGate"
 
 # Artifacts: uncomment after creating the namespace
- [[artifacts]]
- binding = "ARTIFACTS"
- namespace = "trivium"
- remote = true
+[[artifacts]]
+binding = "ARTIFACTS"
+namespace = "trivium"
