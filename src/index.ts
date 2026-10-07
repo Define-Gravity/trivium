@@ -446,6 +446,7 @@ async function importProject(request: Request, env: Env, projectId: string): Pro
 // Real merge: clone project main, merge winner's commit, push merge commit
 // with decision trailers. Uses isomorphic-git with MemoryFS in the Worker.
 async function mergeReal(request: Request, env: Env, taskId: string): Promise<Response> {
+  try {
   const task = await env.LEDGER_DB.prepare(
     "SELECT project_id FROM tasks WHERE id = ?"
   ).bind(taskId).first() as { project_id: string | null } | null;
@@ -534,6 +535,12 @@ async function mergeReal(request: Request, env: Env, taskId: string): Promise<Re
   });
 
   return json({ merged: true, merge_commit: sha, agent: winner.agent_id, trailers });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    console.error("mergeReal failed:", msg, stack);
+    return json({ error: "merge failed", detail: msg }, 500);
+  }
 }
 
 
