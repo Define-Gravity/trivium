@@ -93,30 +93,91 @@ export default {
         "SELECT id, agent_id, repo_name FROM forks WHERE task_id = ? AND status = 'completed'"
       ).bind(taskId).all();
 
-      const started: string[] = [];
+      // Run the review inline. Workflows do not execute in local dev,
+      // so the dispatcher performs the same steps directly: fetch the
+      // fork content from Artifacts, run the static scanners, tier the
+      // risk, then approve, quarantine, or escalate. The ReviewGate
+      // Workflow class remains for deployed environments.
+      const { runAllScans } = await import("./scanners");
+      const reviewed: { forkId: string; status: string }[] = [];
+
       for (const fork of forks.results) {
         const f = fork as { id: string; agent_id: string; repo_name: string };
-        await env.REVIEW_GATE.create({
-          id: `review-${f.id}`,
-          params: {
-            taskId,
-            forkId: f.id,
-            agentId: f.agent_id,
-            repoName: f.repo_name,
-            branch: "main",
-          },
+
+        // Fetch
+        const repo = await env.ARTIFACTS.get(f.repo_name);
+        if (!repo) throw new Error(`repo ${f.repo_name} not found`);
+        const file = await repo.readFile({ ref: "main", path: "hello.js" });
+        const content = typeof file === "string" ? file : JSON.stringify(file);
+        await appendLedger(env.LEDGER_DB, {
+          task_id: taskId,
+          event_type: "gate.fetched",
+          actor: "review-gate",
+          details: { forkId: f.id, repo: f.repo_name, bytes: content.length },
         });
-        started.push(f.id);
+
+        // Scan
+        const scanResult = runAllScans(content);
+        await appendLedger(env.LEDGER_DB, {
+          task_id: taskId,
+          event_type: "gate.scans",
+          actor: "review-gate",
+          details: { forkId: f.id, passed: scanResult.passed, findings: scanResult.findings },
+        });
+
+        if (!scanResult.passed) {
+          await env.LEDGER_DB.prepare("UPDATE forks SET status = 'quarantined' WHERE id = ?").bind(f.id).run();
+          await appendLedger(env.LEDGER_DB, {
+            task_id: taskId,
+            event_type: "fork.quarantined",
+            actor: "review-gate",
+            details: { forkId: f.id, agentId: f.agent_id, reason: scanResult.findings },
+          });
+          reviewed.push({ forkId: f.id, status: "quarantined" });
+          continue;
+        }
+
+        // Risk tier
+        const highRisk = /(auth|login|password|secret|credential|\.github\/workflows|Dockerfile|terraform|\.tf|crypto|encrypt)/i.test(content);
+        const tierName = highRisk ? "high" : "standard";
+        await appendLedger(env.LEDGER_DB, {
+          task_id: taskId,
+          event_type: "gate.tier",
+          actor: "review-gate",
+          details: { forkId: f.id, tier: tierName },
+        });
+
+        if (tierName === "high") {
+          await env.LEDGER_DB.prepare("UPDATE forks SET status = 'awaiting_human' WHERE id = ?").bind(f.id).run();
+          await appendLedger(env.LEDGER_DB, {
+            task_id: taskId,
+            event_type: "fork.escalated",
+            actor: "review-gate",
+            details: { forkId: f.id, agentId: f.agent_id, reason: "high-risk path requires human review" },
+          });
+          reviewed.push({ forkId: f.id, status: "awaiting_human" });
+          continue;
+        }
+
+        // Approve
+        await env.LEDGER_DB.prepare("UPDATE forks SET status = 'approved' WHERE id = ?").bind(f.id).run();
+        await appendLedger(env.LEDGER_DB, {
+          task_id: taskId,
+          event_type: "fork.approved",
+          actor: "review-gate",
+          details: { forkId: f.id, agentId: f.agent_id, branch: "main" },
+        });
+        reviewed.push({ forkId: f.id, status: "approved" });
       }
 
       await appendLedger(env.LEDGER_DB, {
         task_id: taskId,
-        event_type: "review.started",
+        event_type: "review.completed",
         actor: "dispatcher",
-        details: { forks: started },
+        details: { reviewed },
       });
 
-      return json({ started: started.length, forks: started });
+      return json({ reviewed });
     }
     const mergeMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/merge$/);
     if (request.method === "POST" && mergeMatch) {
@@ -225,5 +286,6 @@ async function taskDetail(env: Env, taskId: string): Promise<Response> {
   const budget = await checkBudget(env.LEDGER_DB, taskId, 0);
   return json({ task, forks: forks.results, budget });
 }
+
 
 
