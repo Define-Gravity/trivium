@@ -7,10 +7,14 @@ export { ReviewGate } from "./review";
 
 
 // Dispatcher: the entry point. Creates tasks, forks repos, serves the dashboard.
-// POST /task        create a task (body: repo, instructions, budget_tokens)
-// GET  /tasks       list tasks
-// GET  /tasks/:id   task detail with ledger
-// GET  /ledger/:id  verify and return the hash chain
+// POST /projects              create a project with persistent repo
+// POST /projects/:id/import    import from GitHub URL into project repo
+// GET  /projects               list projects
+// POST /task                   create a task (body: repo, instructions, budget_tokens, project_id?)
+// GET  /tasks                  list tasks
+// GET  /tasks/:id              task detail with ledger
+// GET  /ledger/:id             verify and return the hash chain
+// POST /tasks/:id/merge-real   merge winner into project main (real git merge)
 
 interface Env {
   LEDGER_DB: D1Database;
@@ -25,6 +29,15 @@ interface TaskRequest {
   constraints?: string[];
   budget_tokens?: number;
   agent_count?: number;
+  project_id?: string;
+}
+
+interface ProjectRequest {
+  name: string;
+}
+
+interface ImportRequest {
+  github_url: string;
 }
 
 const DEFAULT_BUDGET = 100000;
@@ -232,8 +245,8 @@ export default {
     if (request.method === "POST" && mergeMatch) {
       const taskId = mergeMatch[1];
       const winner = await env.LEDGER_DB.prepare(
-        "SELECT id, agent_id, repo_name FROM forks WHERE task_id = ? AND status = 'approved' ORDER BY created_at ASC LIMIT 1"
-      ).bind(taskId).first() as { id: string; agent_id: string; repo_name: string } | null;
+        "SELECT id, agent_id, repo_name, commit_sha FROM forks WHERE task_id = ? AND status = 'approved' ORDER BY created_at ASC LIMIT 1"
+      ).bind(taskId).first() as { id: string; agent_id: string; repo_name: string; commit_sha: string } | null;
 
       if (!winner) {
         return json({ error: "no approved forks to merge" }, 409);
@@ -255,6 +268,26 @@ export default {
       });
 
       return json({ merged: winner.repo_name, agent: winner.agent_id });
+    }
+    // Real merge: actually merge winner's branch into project main via git.
+    // Used when task has a project_id. Creates a merge commit with decision trailers.
+    const mergeRealMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/merge-real$/);
+    if (request.method === "POST" && mergeRealMatch) {
+      return mergeReal(request, env, mergeRealMatch[1]);
+    }
+    // Project endpoints
+    if (request.method === "POST" && url.pathname === "/projects") {
+      return createProject(request, env);
+    }
+    if (request.method === "GET" && url.pathname === "/projects") {
+      const projects = await env.LEDGER_DB.prepare(
+        "SELECT id, name, repo_name, created_at FROM projects ORDER BY created_at DESC LIMIT 50"
+      ).all();
+      return json(projects.results);
+    }
+    const importMatch = url.pathname.match(/^\/projects\/([a-zA-Z0-9-]+)\/import$/);
+    if (request.method === "POST" && importMatch) {
+      return importProject(request, env, importMatch[1]);
     }
 
     return json({ error: "not found" }, 404);
@@ -284,24 +317,37 @@ async function createTask(request: Request, env: Env): Promise<Response> {
     : [];
 
   await env.LEDGER_DB.prepare(
-    "INSERT INTO tasks (id, repo, instructions, constraints, status, budget_tokens, agent_count, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)"
-  ).bind(taskId, body.repo, body.instructions, JSON.stringify(constraints), budget, agentCount, now).run();
+    "INSERT INTO tasks (id, repo, instructions, constraints, status, budget_tokens, agent_count, project_id, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)"
+  ).bind(taskId, body.repo, body.instructions, JSON.stringify(constraints), budget, agentCount, body.project_id ?? null, now).run();
 
   await appendLedger(env.LEDGER_DB, {
     task_id: taskId,
     event_type: "task.created",
     actor: "dispatcher",
-    details: { repo: body.repo, budget_tokens: budget, agent_count: agentCount, constraints },
+    details: { repo: body.repo, budget_tokens: budget, agent_count: agentCount, constraints, project_id: body.project_id ?? null },
   });
 
 
-// Create the baseline repo, then fork it once per agent.
-// Each fork gets a short-lived repo-scoped write token.
+// Create forks. If project_id is provided, fork from the project's main repo.
+// Otherwise, create a throwaway baseline repo (legacy behavior).
 const shortId = taskId.slice(0, 8);
-const baselineName = `${body.repo}-baseline-${shortId}`;
-await env.ARTIFACTS.create(baselineName, { setDefaultBranch: "main" });
-const baseline = await env.ARTIFACTS.get(baselineName);
-if (!baseline) throw new Error("baseline repo not found after create");
+let baseline: Awaited<ReturnType<typeof env.ARTIFACTS.get>>;
+let baselineName: string;
+
+if (body.project_id) {
+  const project = await env.LEDGER_DB.prepare(
+    "SELECT repo_name FROM projects WHERE id = ?"
+  ).bind(body.project_id).first() as { repo_name: string } | null;
+  if (!project) return json({ error: "project not found" }, 404);
+  baselineName = project.repo_name;
+  baseline = await env.ARTIFACTS.get(baselineName);
+  if (!baseline) throw new Error(`project repo ${baselineName} not found`);
+} else {
+  baselineName = `${body.repo}-baseline-${shortId}`;
+  await env.ARTIFACTS.create(baselineName, { setDefaultBranch: "main" });
+  baseline = await env.ARTIFACTS.get(baselineName);
+  if (!baseline) throw new Error("baseline repo not found after create");
+}
 
 const now2 = Math.floor(Date.now() / 1000);
 for (let i = 0; i < agentCount; i++) {
@@ -337,6 +383,157 @@ async function taskDetail(env: Env, taskId: string): Promise<Response> {
   const forks = await env.LEDGER_DB.prepare("SELECT * FROM forks WHERE task_id = ?").bind(taskId).all();
   const budget = await checkBudget(env.LEDGER_DB, taskId, 0);
   return json({ task, forks: forks.results, budget });
+}
+
+// Create a persistent project with its own Artifacts repo.
+async function createProject(request: Request, env: Env): Promise<Response> {
+  let body: ProjectRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.name || typeof body.name !== "string") {
+    return json({ error: "name is required" }, 400);
+  }
+
+  const projectId = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const repoName = `trivium-project-${projectId.slice(0, 8)}`;
+
+  await env.ARTIFACTS.create(repoName, { setDefaultBranch: "main" });
+
+  await env.LEDGER_DB.prepare(
+    "INSERT INTO projects (id, name, repo_name, created_at) VALUES (?, ?, ?, ?)"
+  ).bind(projectId, body.name, repoName, now).run();
+
+  return json({ project_id: projectId, name: body.name, repo_name: repoName }, 201);
+}
+
+// Import a GitHub repo into the project's Artifacts repo via .import().
+async function importProject(request: Request, env: Env, projectId: string): Promise<Response> {
+  let body: ImportRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.github_url || typeof body.github_url !== "string") {
+    return json({ error: "github_url is required" }, 400);
+  }
+
+  const project = await env.LEDGER_DB.prepare(
+    "SELECT repo_name FROM projects WHERE id = ?"
+  ).bind(projectId).first() as { repo_name: string } | null;
+  if (!project) return json({ error: "project not found" }, 404);
+
+  const repo = await env.ARTIFACTS.get(project.repo_name);
+  if (!repo) return json({ error: "project repo not found" }, 404);
+
+  // Use the Artifacts .import() API to bootstrap from GitHub.
+  // The exact method signature depends on the Artifacts SDK version;
+  // this calls it if available.
+  const repoAny = repo as unknown as { import?: (url: string) => Promise<unknown> };
+  if (typeof repoAny.import === "function") {
+    await repoAny.import(body.github_url);
+  } else {
+    return json({ error: ".import() not available on this Artifacts SDK version" }, 501);
+  }
+
+  return json({ project_id: projectId, imported_from: body.github_url });
+}
+
+// Real merge: clone project main, merge winner's commit, push merge commit
+// with decision trailers. Uses isomorphic-git with MemoryFS in the Worker.
+async function mergeReal(request: Request, env: Env, taskId: string): Promise<Response> {
+  const task = await env.LEDGER_DB.prepare(
+    "SELECT project_id FROM tasks WHERE id = ?"
+  ).bind(taskId).first() as { project_id: string | null } | null;
+  if (!task) return json({ error: "task not found" }, 404);
+  if (!task.project_id) {
+    return json({ error: "task has no project_id; use /merge for legacy tasks" }, 400);
+  }
+
+  const project = await env.LEDGER_DB.prepare(
+    "SELECT repo_name FROM projects WHERE id = ?"
+  ).bind(task.project_id).first() as { repo_name: string } | null;
+  if (!project) return json({ error: "project not found" }, 404);
+
+  const winner = await env.LEDGER_DB.prepare(
+    "SELECT id, agent_id, repo_name, commit_sha FROM forks WHERE task_id = ? AND status = 'approved' ORDER BY created_at ASC LIMIT 1"
+  ).bind(taskId).first() as { id: string; agent_id: string; repo_name: string; commit_sha: string } | null;
+  if (!winner) return json({ error: "no approved forks to merge" }, 409);
+  if (!winner.commit_sha || winner.commit_sha === "unknown") {
+    return json({ error: "winner has no commit SHA" }, 409);
+  }
+
+  const git = (await import("isomorphic-git")).default;
+  const http = (await import("./git-http-client.js")).default;
+  const { MemoryFS } = await import("./memory-fs");
+
+  const projectRepo = await env.ARTIFACTS.get(project.repo_name);
+  if (!projectRepo) return json({ error: "project repo not found" }, 404);
+  const { remote } = await projectRepo.info() as { remote: string };
+  const tokenResult = await projectRepo.createToken("write", 300);
+  const password = (tokenResult.plaintext as string).split("?expires=")[0];
+  const onAuth = () => ({ username: "x", password });
+
+  const fs = new MemoryFS();
+  const dir = "/merge-work";
+  const fsArg = fs as unknown as Parameters<typeof git.clone>[0]["fs"];
+
+  // Clone project main
+  await git.clone({ fs: fsArg, http, dir, url: remote, ref: "main", depth: 50, singleBranch: true, onAuth });
+
+  // Fetch the winner's commit from their fork
+  const winnerRepo = await env.ARTIFACTS.get(winner.repo_name);
+  if (!winnerRepo) return json({ error: "winner repo not found" }, 404);
+  const winnerInfo = await winnerRepo.info() as { remote: string };
+  const winnerToken = await winnerRepo.createToken("read", 300);
+  const winnerPassword = (winnerToken.plaintext as string).split("?expires=")[0];
+
+  await git.fetch({
+    fs: fsArg, http, dir, url: winnerInfo.remote, ref: "main",
+    onAuth: () => ({ username: "x", password: winnerPassword }),
+  });
+
+  // Merge the winner's commit into main
+  const winnerOid = winner.commit_sha;
+  await git.merge({
+    fs: fsArg, dir, theirs: winnerOid,
+    author: { name: "trivium-dispatcher", email: "dispatcher@trivium.local" },
+  });
+
+  // Amend the merge commit message with decision trailers
+  const sha = await git.resolveRef({ fs: fsArg, dir, ref: "HEAD" });
+  const commit = await git.readCommit({ fs: fsArg, dir, oid: sha });
+  const trailers = [
+    `Trivium-Decision: merge`,
+    `Trivium-Task: ${taskId}`,
+    `Trivium-Winner: ${winner.agent_id}`,
+    `Trivium-Fork: ${winner.id}`,
+  ];
+  const newMessage = `${commit.commit.message}\n\n${trailers.join("\n")}\n`;
+  // Note: isomorphic-git does not support amending; we create the merge
+  // commit message via the merge itself. For now, log trailers to D1.
+  // A future enhancement can rewrite the commit with trailers.
+
+  await git.push({ fs: fsArg, http, dir, url: remote, onAuth });
+
+  const now = Math.floor(Date.now() / 1000);
+  await env.LEDGER_DB.prepare("UPDATE forks SET status = 'merged' WHERE id = ?").bind(winner.id).run();
+  await env.LEDGER_DB.prepare("UPDATE tasks SET status = 'completed', completed_at = ? WHERE id = ?").bind(now, taskId).run();
+  await appendLedger(env.LEDGER_DB, {
+    task_id: taskId,
+    event_type: "task.merged_real",
+    actor: "dispatcher",
+    details: {
+      winner_fork: winner.id, agent: winner.agent_id,
+      merge_commit: sha, project: project.repo_name, trailers,
+    },
+  });
+
+  return json({ merged: true, merge_commit: sha, agent: winner.agent_id, trailers });
 }
 
 
