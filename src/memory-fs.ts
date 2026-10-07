@@ -52,6 +52,15 @@ export class MemoryFS {
     lstat: this.lstat.bind(this),
   };
 
+  // Stubs for isomorphic-git. We never create symlinks, but the binder
+  // requires these methods to exist.
+  async readlink(_path: string): Promise<string> {
+    throw new Error("ENOSYS: readlink not supported");
+  }
+  async symlink(_target: string, _path: string): Promise<void> {
+    throw new Error("ENOSYS: symlink not supported");
+  }
+
   normalize(input: string) {
     const segments: string[] = [];
     for (const part of input.split("/")) {
