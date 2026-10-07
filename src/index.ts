@@ -62,6 +62,30 @@ export default {
       ).bind(ledgerMatch[1]).all();
       return json({ valid, events: rows.results });
     }
+    const forksMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/forks$/);
+    if (request.method === "GET" && forksMatch) {
+      const forks = await env.LEDGER_DB.prepare(
+        "SELECT id, agent_id, repo_name, token, token_expiry, status FROM forks WHERE task_id = ?"
+      ).bind(forksMatch[1]).all();
+      return json({ forks: forks.results });
+    }
+    const completeMatch = url.pathname.match(/^\/forks\/([a-zA-Z0-9-]+)\/complete$/);
+    if (request.method === "POST" && completeMatch) {
+      const body = await request.json() as { commit_sha?: string };
+      const fork = await env.LEDGER_DB.prepare(
+        "SELECT * FROM forks WHERE id = ?"
+      ).bind(completeMatch[1]).first();
+      if (!fork) return json({ error: "fork not found" }, 404);
+
+      const stub = env.MERGE_COORDINATOR.get(env.MERGE_COORDINATOR.idFromName(fork.task_id as string));
+      const result = await stub.submitFork(fork.task_id as string, {
+        forkId: fork.id as string,
+        agentId: fork.agent_id as string,
+        branch: "main",
+        commitSha: body.commit_sha ?? "unknown",
+      });
+      return json(result);
+    }
 
     return json({ error: "not found" }, 404);
   },
@@ -141,3 +165,4 @@ async function taskDetail(env: Env, taskId: string): Promise<Response> {
   const budget = await checkBudget(env.LEDGER_DB, taskId, 0);
   return json({ task, forks: forks.results, budget });
 }
+
