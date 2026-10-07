@@ -9,7 +9,9 @@
 // note is written by the review gate, not by any agent.
 
 import git from "isomorphic-git";
-import http from "isomorphic-git/http/web";
+// Vendored from isomorphic-git/http/web: the subpath export does not resolve
+// under Wrangler's bundler, and this file has no dependencies of its own.
+import http from "./git-http-client.js";
 import { MemoryFS } from "./memory-fs";
 
 export const REVIEW_NOTES_REF = "refs/notes/trivium/review";
