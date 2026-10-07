@@ -72,7 +72,11 @@ function run(cmd, cwd) {
 
 async function main() {
   const res = await fetch(`${API}/tasks/${taskId}/forks`);
-  const { forks } = await res.json();
+  const { forks, constraints } = await res.json();
+  const taskConstraints = Array.isArray(constraints) ? constraints : [];
+  if (taskConstraints.length > 0) {
+    console.log(`Task constraints: ${taskConstraints.join("; ")}`);
+  }
 
   for (let i = 0; i < forks.length; i++) {
     const fork = forks[i];
@@ -91,7 +95,19 @@ async function main() {
 
       writeFileSync(join(dir, strategy.file), strategy.content);
       run(`git add ${strategy.file}`, dir);
-      run(`git commit -m "${strategy.name}: implement hello world"`, dir);
+
+      // Commit trailers carry the Trivium metadata. They travel with the
+      // commit, are immutable, and the dispatcher reads them via log().
+      const trailerLines = [
+        `Trivium-Task: ${taskId}`,
+        `Trivium-Agent: ${fork.agent_id}`,
+        `Trivium-Strategy: ${strategy.name}`,
+        ...taskConstraints.map((c) => `Trivium-Constraint: ${c}`),
+      ];
+      const commitMsg = `${strategy.name}: implement hello world\n\n${trailerLines.join("\n")}`;
+      writeFileSync(join(dir, ".git-commit-msg"), commitMsg);
+      run(`git commit -F .git-commit-msg`, dir);
+      run(`rm .git-commit-msg`, dir);
       const sha = execSync(`git rev-parse HEAD`, { cwd: dir }).toString().trim();
       run(`git -c http.extraHeader="Authorization: Bearer ${plaintext}" push origin main`, dir);
 

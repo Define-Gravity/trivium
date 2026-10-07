@@ -22,6 +22,7 @@ interface Env {
 interface TaskRequest {
   repo: string;
   instructions: string;
+  constraints?: string[];
   budget_tokens?: number;
   agent_count?: number;
 }
@@ -64,10 +65,19 @@ export default {
     }
     const forksMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/forks$/);
     if (request.method === "GET" && forksMatch) {
+      const task = await env.LEDGER_DB.prepare(
+        "SELECT constraints FROM tasks WHERE id = ?"
+      ).bind(forksMatch[1]).first() as { constraints: string } | null;
       const forks = await env.LEDGER_DB.prepare(
         "SELECT id, agent_id, repo_name, token, token_expiry, status FROM forks WHERE task_id = ?"
       ).bind(forksMatch[1]).all();
-      return json({ forks: forks.results });
+      let constraints: string[] = [];
+      try {
+        constraints = JSON.parse(task?.constraints ?? "[]");
+      } catch {
+        constraints = [];
+      }
+      return json({ forks: forks.results, constraints });
     }
     const completeMatch = url.pathname.match(/^\/forks\/([a-zA-Z0-9-]+)\/complete$/);
     if (request.method === "POST" && completeMatch) {
@@ -230,16 +240,19 @@ async function createTask(request: Request, env: Env): Promise<Response> {
   const now = Math.floor(Date.now() / 1000);
   const budget = body.budget_tokens ?? DEFAULT_BUDGET;
   const agentCount = Math.min(Math.max(body.agent_count ?? DEFAULT_AGENTS, 1), 5);
+  const constraints = Array.isArray(body.constraints)
+    ? body.constraints.filter((c) => typeof c === "string" && c.trim().length > 0).slice(0, 20)
+    : [];
 
   await env.LEDGER_DB.prepare(
-    "INSERT INTO tasks (id, repo, instructions, status, budget_tokens, agent_count, created_at) VALUES (?, ?, ?, 'pending', ?, ?, ?)"
-  ).bind(taskId, body.repo, body.instructions, budget, agentCount, now).run();
+    "INSERT INTO tasks (id, repo, instructions, constraints, status, budget_tokens, agent_count, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)"
+  ).bind(taskId, body.repo, body.instructions, JSON.stringify(constraints), budget, agentCount, now).run();
 
   await appendLedger(env.LEDGER_DB, {
     task_id: taskId,
     event_type: "task.created",
     actor: "dispatcher",
-    details: { repo: body.repo, budget_tokens: budget, agent_count: agentCount },
+    details: { repo: body.repo, budget_tokens: budget, agent_count: agentCount, constraints },
   });
 
 
