@@ -86,6 +86,66 @@ export default {
       });
       return json(result);
     }
+    const reviewMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/review$/);
+    if (request.method === "POST" && reviewMatch) {
+      const taskId = reviewMatch[1];
+      const forks = await env.LEDGER_DB.prepare(
+        "SELECT id, agent_id, repo_name FROM forks WHERE task_id = ? AND status = 'completed'"
+      ).bind(taskId).all();
+
+      const started: string[] = [];
+      for (const fork of forks.results) {
+        const f = fork as { id: string; agent_id: string; repo_name: string };
+        await env.REVIEW_GATE.create({
+          id: `review-${f.id}`,
+          params: {
+            taskId,
+            forkId: f.id,
+            agentId: f.agent_id,
+            repoName: f.repo_name,
+            branch: "main",
+          },
+        });
+        started.push(f.id);
+      }
+
+      await appendLedger(env.LEDGER_DB, {
+        task_id: taskId,
+        event_type: "review.started",
+        actor: "dispatcher",
+        details: { forks: started },
+      });
+
+      return json({ started: started.length, forks: started });
+    }
+    const mergeMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/merge$/);
+    if (request.method === "POST" && mergeMatch) {
+      const taskId = mergeMatch[1];
+      const winner = await env.LEDGER_DB.prepare(
+        "SELECT id, agent_id, repo_name FROM forks WHERE task_id = ? AND status = 'approved' ORDER BY created_at ASC LIMIT 1"
+      ).bind(taskId).first() as { id: string; agent_id: string; repo_name: string } | null;
+
+      if (!winner) {
+        return json({ error: "no approved forks to merge" }, 409);
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      await env.LEDGER_DB.prepare(
+        "UPDATE forks SET status = 'merged' WHERE id = ?"
+      ).bind(winner.id).run();
+      await env.LEDGER_DB.prepare(
+        "UPDATE tasks SET status = 'completed', completed_at = ? WHERE id = ?"
+      ).bind(now, taskId).run();
+
+      await appendLedger(env.LEDGER_DB, {
+        task_id: taskId,
+        event_type: "task.merged",
+        actor: "coordinator",
+        details: { winner_fork: winner.id, agent: winner.agent_id, repo: winner.repo_name },
+      });
+
+      return json({ merged: winner.repo_name, agent: winner.agent_id });
+    }
 
     return json({ error: "not found" }, 404);
   },
@@ -165,4 +225,5 @@ async function taskDetail(env: Env, taskId: string): Promise<Response> {
   const budget = await checkBudget(env.LEDGER_DB, taskId, 0);
   return json({ task, forks: forks.results, budget });
 }
+
 
