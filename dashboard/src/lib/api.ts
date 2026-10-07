@@ -1,9 +1,9 @@
 // API client for the Trivium dispatcher.
-// The base URL comes from the environment. Never hardcode it.
-// This client runs server-side in Astro frontmatter, so the API
-// stays server-to-server and tokens never reach the browser.
+// Production URL is the default. Override with PUBLIC_TRIVIUM_API env var
+// for local dev. This client runs server-side in Astro frontmatter, so
+// the API stays server-to-server and tokens never reach the browser.
 
-const API_BASE = import.meta.env.PUBLIC_TRIVIUM_API ?? "http://localhost:8787";
+const API_BASE = import.meta.env.PUBLIC_TRIVIUM_API ?? "https://trivium.abnel.workers.dev";
 
 interface ApiOptions {
   method?: string;
