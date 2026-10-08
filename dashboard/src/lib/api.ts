@@ -58,6 +58,18 @@ export function createApi(binding: { fetch: typeof fetch }) {
       }),
     getProjectRemote: (id: string) =>
       request<{ remote: string; token: string; expires_in: number }>(`/projects/${id}/remote`),
+    setApiKey: (provider: "openai" | "gemini", api_key: string) =>
+      request<{ provider: string; configured: boolean }>("/settings/keys", {
+        method: "POST",
+        body: { provider, api_key },
+      }),
+    getKeyStatus: () =>
+      request<Record<"openai" | "gemini", { configured: boolean; spend_usd: number }>>("/settings/keys"),
+    runAgents: (taskId: string, provider: "openai" | "gemini") =>
+      request<{ started: number; workflow_ids: string[]; provider: string }>(`/tasks/${taskId}/run`, {
+        method: "POST",
+        body: { provider },
+      }),
   };
 }
 

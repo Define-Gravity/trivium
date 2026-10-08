@@ -1,0 +1,118 @@
+---
+// Settings: LLM API key management.
+// Keys are encrypted server-side (AES-GCM) and never returned to the client.
+// This page only shows configured status and spend, never the keys themselves.
+import { createApi } from "../lib/api";
+import { env } from "cloudflare:workers";
+
+const api = createApi(env.TRIVIUM_API as any);
+import "../styles/global.css";
+
+let status: Awaited<ReturnType<ReturnType<typeof createApi>["getKeyStatus"]>> | null = null;
+let error: string | null = null;
+let success: string | null = null;
+
+try {
+  status = await api.getKeyStatus();
+} catch (e) {
+  error = e instanceof Error ? e.message : "Failed to load key status";
+}
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const provider = String(form.get("provider") ?? "");
+  const api_key = String(form.get("api_key") ?? "").trim();
+
+  if ((provider === "openai" || provider === "gemini") && api_key) {
+    try {
+      await api.setApiKey(provider, api_key);
+      success = `${provider === "openai" ? "OpenAI" : "Gemini"} key saved and encrypted.`;
+      status = await api.getKeyStatus();
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Failed to save key";
+    }
+  } else {
+    error = "Provider and API key are required.";
+  }
+}
+
+const fmtSpend = (usd: number) => `$${usd.toFixed(4)}`;
+---
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Settings — Trivium</title>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <p><a href="/" style="color: var(--muted);">&larr; Home</a></p>
+        <h1>Settings</h1>
+        <p>Bring your own LLM keys. Keys are encrypted with AES-GCM before storage and never displayed back.</p>
+      </div>
+    </header>
+
+    {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
+    {success && <div class="card" style="border-color: var(--green); color: var(--green);">{success}</div>}
+
+    <div style="display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+      <div class="card">
+        <h3 style="margin-top: 0;">OpenAI</h3>
+        <p class="task-meta">
+          Status: {status?.openai.configured
+            ? <span style="color: var(--green);">✓ Configured</span>
+            : <span style="color: var(--muted);">Not configured</span>}
+        </p>
+        <p class="task-meta">Spend: {status ? fmtSpend(status.openai.spend_usd) : "—"}</p>
+        <p class="task-meta">Model: gpt-4o-mini</p>
+        <form method="POST" style="margin-top: 1rem;">
+          <input type="hidden" name="provider" value="openai" />
+          <div class="form-row">
+            <label for="openai-key">API key</label>
+            <input type="password" id="openai-key" name="api_key" required autocomplete="off"
+              placeholder={status?.openai.configured ? "•••••••• (set — enter new to replace)" : "sk-..."} />
+          </div>
+          <button type="submit" class="btn btn-primary">
+            {status?.openai.configured ? "Replace key" : "Save key"}
+          </button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top: 0;">Gemini</h3>
+        <p class="task-meta">
+          Status: {status?.gemini.configured
+            ? <span style="color: var(--green);">✓ Configured</span>
+            : <span style="color: var(--muted);">Not configured</span>}
+        </p>
+        <p class="task-meta">Spend: {status ? fmtSpend(status.gemini.spend_usd) : "—"}</p>
+        <p class="task-meta">Model: gemini-2.0-flash</p>
+        <form method="POST" style="margin-top: 1rem;">
+          <input type="hidden" name="provider" value="gemini" />
+          <div class="form-row">
+            <label for="gemini-key">API key</label>
+            <input type="password" id="gemini-key" name="api_key" required autocomplete="off"
+              placeholder={status?.gemini.configured ? "•••••••• (set — enter new to replace)" : "AIza..."} />
+          </div>
+          <button type="submit" class="btn btn-primary">
+            {status?.gemini.configured ? "Replace key" : "Save key"}
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 1.5rem;">
+      <h3 style="margin-top: 0;">How it works</h3>
+      <ul style="color: var(--muted); padding-left: 1.25rem; margin-bottom: 0;">
+        <li>Keys are encrypted with AES-GCM (PBKDF2-derived key from a server secret) before hitting D1.</li>
+        <li>Workflows decrypt keys in-memory only, for the duration of the LLM call.</li>
+        <li>Keys are never logged, never returned by any API, and never leave Cloudflare.</li>
+        <li>Spend is tracked per provider from actual token usage reported by the API.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

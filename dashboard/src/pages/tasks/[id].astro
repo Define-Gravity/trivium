@@ -22,10 +22,22 @@ if (Astro.request.method === "POST") {
     if (action === "review") await api.runReview(id);
     if (action === "merge") await api.merge(id);
     if (action === "merge-real") await api.mergeReal(id);
+    if (action === "run-agents") {
+      const provider = String(form.get("provider") ?? "openai");
+      if (provider !== "openai" && provider !== "gemini") throw new Error("invalid provider");
+      const result = await api.runAgents(id, provider);
+      // Redirect to refresh and show updated fork statuses
+      return Astro.redirect(`/tasks/${id}?ran=${result.started}`);
+    }
   } catch (e) {
     error = e instanceof Error ? e.message : "Action failed";
   }
 }
+
+let keyStatus: Awaited<ReturnType<ReturnType<typeof createApi>["getKeyStatus"]>> | null = null;
+try {
+  keyStatus = await api.getKeyStatus();
+} catch { /* keys endpoint may not exist on older deploys */ }
 
 try {
   task = await api.getTask(id);
@@ -85,6 +97,32 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
                 <button type="submit" class="btn">Merge winner</button>
               </form>
             )}
+          </div>
+        )}
+
+        {task.task.status === "running" && task.forks.some((f: any) => f.status !== "completed") && (
+          <div class="card" style="margin-bottom: 1.5rem;">
+            <h3 style="margin-top: 0;">Run agents on Cloudflare</h3>
+            {keyStatus && (keyStatus.openai.configured || keyStatus.gemini.configured) ? (
+              <form method="POST" style="display: flex; gap: 0.75rem; align-items: end;">
+                <input type="hidden" name="action" value="run-agents" />
+                <div class="form-row" style="margin: 0;">
+                  <label for="provider">Provider</label>
+                  <select id="provider" name="provider">
+                    {keyStatus.openai.configured && <option value="openai">OpenAI (gpt-4o-mini)</option>}
+                    {keyStatus.gemini.configured && <option value="gemini">Gemini (2.0-flash)</option>}
+                  </select>
+                </div>
+                <button type="submit" class="btn btn-primary">Start agents</button>
+              </form>
+            ) : (
+              <p style="color: var(--muted); margin-bottom: 0;">
+                No LLM keys configured. <a href="/settings">Add your API keys in Settings</a> to run agents on Cloudflare.
+              </p>
+            )}
+            <p class="task-meta" style="margin-top: 0.75rem; margin-bottom: 0;">
+              Each fork gets its own Workflow. Agents clone, call the LLM, commit with Trivium trailers, and push.
+            </p>
           </div>
         )}
 
