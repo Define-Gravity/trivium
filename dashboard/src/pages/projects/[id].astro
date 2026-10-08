@@ -1,0 +1,91 @@
+---
+// Project detail page: shows repo info, remote URL for bootstrapping,
+// and tasks belonging to this project.
+import { createApi } from "../../lib/api";
+import { env } from "cloudflare:workers";
+
+const api = createApi(env.TRIVIUM_API as any);
+import "../../styles/global.css";
+
+const { id } = Astro.params;
+
+let project: { id: string; name: string; repo_name: string; created_at: number } | null = null;
+let remote: { remote: string; token: string; expires_in: number } | null = null;
+let tasks: Awaited<ReturnType<ReturnType<typeof createApi>["listTasks"]>> = [];
+let error: string | null = null;
+
+try {
+  const projects = await api.listProjects();
+  project = projects.find((p) => p.id === id) ?? null;
+  if (!project) {
+    error = "Project not found.";
+  } else {
+    [remote, tasks] = await Promise.all([
+      api.getProjectRemote(id!),
+      api.listTasks(),
+    ]);
+    // Filter tasks to this project (task.project_id matches)
+    tasks = tasks.filter((t: any) => t.project_id === id);
+  }
+} catch (e) {
+  error = e instanceof Error ? e.message : "Failed to load project";
+}
+
+const formatDate = (epoch: number) =>
+  new Date(epoch * 1000).toLocaleString();
+
+// Build a copy-paste git command. Token is short-lived; the page
+// fetches a fresh one on each load.
+const gitCommand = remote
+  ? `git remote add artifacts https://x:${remote.token}@${remote.remote.replace(/^https:\/\//, "")}\ngit push artifacts main`
+  : "";
+---
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{project ? project.name : "Project"} — Trivium</title>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <p><a href="/" style="color: var(--muted);">&larr; All projects</a></p>
+        <h1>{project ? project.name : "Project"}</h1>
+        {project && <p class="task-meta">{project.repo_name} &middot; created {formatDate(project.created_at)}</p>}
+      </div>
+    </header>
+
+    {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
+
+    {project && remote && (
+      <div class="card">
+        <h3 style="margin-top: 0;">Bootstrap this repo</h3>
+        <p style="color: var(--muted);">Push an existing repo into the project. Token expires in {Math.round(remote.expires_in / 60)} minutes; reload the page for a fresh one.</p>
+        <pre style="background: #111; padding: 1rem; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-all;"><code>{gitCommand}</code></pre>
+        <p class="task-meta">Remote: {remote.remote}</p>
+      </div>
+    )}
+
+    {project && (
+      <>
+        <h2>Tasks in this project</h2>
+        {tasks.length === 0 && !error && (
+          <div class="card"><p style="color: var(--muted); margin: 0;">No tasks yet for this project.</p></div>
+        )}
+        {tasks.map((t) => (
+          <a href={`/tasks/${t.id}`} class="task-row" style="text-decoration: none; color: inherit; display: flex;">
+            <div>
+              <div><strong>{t.repo}</strong></div>
+              <div class="task-meta">{t.agent_count} agents &middot; {formatDate(t.created_at)}</div>
+              <div class="task-id">{t.id}</div>
+            </div>
+            <span class={`badge badge-${t.status}`}>{t.status}</span>
+          </a>
+        ))}
+      </>
+    )}
+  </div>
+</body>
+</html>

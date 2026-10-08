@@ -33,10 +33,10 @@ export function createApi(binding: { fetch: typeof fetch }) {
     listTasks: () => request<Task[]>("/tasks"),
     getTask: (id: string) => request<{ task: Task; forks: Fork[]; budget: unknown }>(`/tasks/${id}`),
     getLedger: (id: string) => request<{ valid: boolean; events: LedgerEvent[] }>(`/ledger/${id}`),
-    createTask: (repo: string, instructions: string, agent_count: number) =>
+    createTask: (repo: string, instructions: string, agent_count: number, project_id?: string) =>
       request<{ task_id: string }>("/task", {
         method: "POST",
-        body: { repo, instructions, agent_count },
+        body: { repo, instructions, agent_count, project_id },
       }),
     runReview: (id: string) =>
       request<{ reviewed: { forkId: string; status: string }[] }>(`/tasks/${id}/review`, {
@@ -46,6 +46,18 @@ export function createApi(binding: { fetch: typeof fetch }) {
       request<{ merged: string; agent: string }>(`/tasks/${id}/merge`, {
         method: "POST",
       }),
+    mergeReal: (id: string) =>
+      request<{ merged: boolean; merge_commit: string; agent: string }>(`/tasks/${id}/merge-real`, {
+        method: "POST",
+      }),
+    listProjects: () => request<Project[]>("/projects"),
+    createProject: (name: string) =>
+      request<{ project_id: string; name: string; repo_name: string }>("/projects", {
+        method: "POST",
+        body: { name },
+      }),
+    getProjectRemote: (id: string) =>
+      request<{ remote: string; token: string; expires_in: number }>(`/projects/${id}/remote`),
   };
 }
 
@@ -59,8 +71,16 @@ export interface Task {
   budget_tokens: number;
   spent_tokens: number;
   agent_count: number;
+  project_id: string | null;
   created_at: number;
   completed_at: number | null;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  repo_name: string;
+  created_at: number;
 }
 
 export interface Fork {

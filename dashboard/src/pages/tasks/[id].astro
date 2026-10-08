@@ -21,6 +21,7 @@ if (Astro.request.method === "POST") {
   try {
     if (action === "review") await api.runReview(id);
     if (action === "merge") await api.merge(id);
+    if (action === "merge-real") await api.mergeReal(id);
   } catch (e) {
     error = e instanceof Error ? e.message : "Action failed";
   }
@@ -73,10 +74,17 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
               <input type="hidden" name="action" value="review" />
               <button type="submit" class="btn btn-primary">Run review gates</button>
             </form>
-            <form method="POST" style="display: inline;">
-              <input type="hidden" name="action" value="merge" />
-              <button type="submit" class="btn">Merge winner</button>
-            </form>
+            {(task.task as any).project_id ? (
+              <form method="POST" style="display: inline;">
+                <input type="hidden" name="action" value="merge-real" />
+                <button type="submit" class="btn">Merge to main</button>
+              </form>
+            ) : (
+              <form method="POST" style="display: inline;">
+                <input type="hidden" name="action" value="merge" />
+                <button type="submit" class="btn">Merge winner</button>
+              </form>
+            )}
           </div>
         )}
 

@@ -1,5 +1,5 @@
 ---
-// Task list page. Server-rendered from the Trivium API.
+// Homepage: projects and tasks. Server-rendered from the Trivium API.
 import { createApi } from "../lib/api";
 import { env } from "cloudflare:workers";
 
@@ -7,30 +7,49 @@ const api = createApi(env.TRIVIUM_API as any);
 import "../styles/global.css";
 
 let tasks: Awaited<ReturnType<ReturnType<typeof createApi>["listTasks"]>> = [];
+let projects: Awaited<ReturnType<ReturnType<typeof createApi>["listProjects"]>> = [];
 let error: string | null = null;
 
 try {
-  tasks = await api.listTasks();
+  [tasks, projects] = await Promise.all([api.listTasks(), api.listProjects()]);
 } catch (e) {
-  error = e instanceof Error ? e.message : "Failed to load tasks";
+  error = e instanceof Error ? e.message : "Failed to load data";
 }
 
-// Handle the create form POST
+// Handle form POSTs (distinguished by hidden _form field)
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
-  const repo = String(form.get("repo") ?? "").trim();
-  const instructions = String(form.get("instructions") ?? "").trim();
-  const agent_count = Math.min(Math.max(parseInt(String(form.get("agent_count") ?? "3"), 10) || 3, 1), 5);
+  const formKind = String(form.get("_form") ?? "");
 
-  if (repo && instructions) {
-    try {
-      const { task_id } = await api.createTask(repo, instructions, agent_count);
-      return Astro.redirect(`/tasks/${task_id}`);
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Failed to create task";
+  if (formKind === "project") {
+    const name = String(form.get("name") ?? "").trim();
+    if (name) {
+      try {
+        const { project_id } = await api.createProject(name);
+        return Astro.redirect(`/projects/${project_id}`);
+      } catch (e) {
+        error = e instanceof Error ? e.message : "Failed to create project";
+      }
+    } else {
+      error = "Project name is required.";
     }
   } else {
-    error = "Repository name and instructions are required.";
+    // task form (default)
+    const repo = String(form.get("repo") ?? "").trim();
+    const instructions = String(form.get("instructions") ?? "").trim();
+    const agent_count = Math.min(Math.max(parseInt(String(form.get("agent_count") ?? "3"), 10) || 3, 1), 5);
+    const project_id = String(form.get("project_id") ?? "").trim() || undefined;
+
+    if (repo && instructions) {
+      try {
+        const { task_id } = await api.createTask(repo, instructions, agent_count, project_id);
+        return Astro.redirect(`/tasks/${task_id}`);
+      } catch (e) {
+        error = e instanceof Error ? e.message : "Failed to create task";
+      }
+    } else {
+      error = "Repository name and instructions are required.";
+    }
   }
 }
 
@@ -55,8 +74,33 @@ const formatDate = (epoch: number) =>
 
     {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
 
+    <h2>Projects</h2>
+    <form class="create-task" method="POST" style="margin-bottom: 1.5rem;">
+      <input type="hidden" name="_form" value="project" />
+      <h3 style="margin-top: 0;">New project</h3>
+      <div class="form-row">
+        <label for="project-name">Project name</label>
+        <input type="text" id="project-name" name="name" required maxlength="64" placeholder="my-project" />
+      </div>
+      <button type="submit" class="btn btn-primary">Create project</button>
+    </form>
+
+    {projects.length === 0 && !error && (
+      <div class="card"><p style="color: var(--muted); margin: 0;">No projects yet. Create one above.</p></div>
+    )}
+    {projects.map((p) => (
+      <a href={`/projects/${p.id}`} class="task-row" style="text-decoration: none; color: inherit; display: flex;">
+        <div>
+          <div><strong>{p.name}</strong></div>
+          <div class="task-meta">{p.repo_name} &middot; {formatDate(p.created_at)}</div>
+          <div class="task-id">{p.id}</div>
+        </div>
+      </a>
+    ))}
+
+    <h2 style="margin-top: 2rem;">New task</h2>
     <form class="create-task" method="POST">
-      <h2 style="margin-top: 0;">New task</h2>
+      <input type="hidden" name="_form" value="task" />
       <div class="form-row">
         <label for="repo">Repository name</label>
         <input type="text" id="repo" name="repo" required maxlength="64" placeholder="my-project" />
@@ -68,6 +112,15 @@ const formatDate = (epoch: number) =>
       <div class="form-row">
         <label for="agent_count">Agents (1-5)</label>
         <input type="number" id="agent_count" name="agent_count" value="3" min="1" max="5" />
+      </div>
+      <div class="form-row">
+        <label for="project_id">Project (optional)</label>
+        <select id="project_id" name="project_id">
+          <option value="">No project (legacy)</option>
+          {projects.map((p) => (
+            <option value={p.id}>{p.name}</option>
+          ))}
+        </select>
       </div>
       <button type="submit" class="btn btn-primary">Dispatch agents</button>
     </form>
