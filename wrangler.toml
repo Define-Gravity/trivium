@@ -22,6 +22,12 @@ binding = "REVIEW_GATE"
 name = "review-gate"
 class_name = "ReviewGate"
 
+# Workflow: LLM agent runner (clone -> LLM -> commit -> push)
+[[workflows]]
+binding = "AGENT_RUNNER"
+name = "agent-runner"
+class_name = "AgentRunner"
+
 # Artifacts: uncomment after creating the namespace
 [[artifacts]]
 binding = "ARTIFACTS"

@@ -4,6 +4,7 @@ import { checkBudget } from "./governor";
 
 export { MergeCoordinator } from "./coordinator";
 export { ReviewGate } from "./review";
+export { AgentRunner } from "./agent-workflow";
 
 
 // Dispatcher: the entry point. Creates tasks, forks repos, serves the dashboard.
@@ -20,7 +21,9 @@ interface Env {
   LEDGER_DB: D1Database;
   MERGE_COORDINATOR: DurableObjectNamespace;
   REVIEW_GATE: Workflow;
+  AGENT_RUNNER: Workflow;
   ARTIFACTS: Artifacts;
+  KEY_ENCRYPTION_SECRET: string;
 }
 
 interface TaskRequest {
@@ -292,6 +295,18 @@ export default {
     const remoteMatch = url.pathname.match(/^\/projects\/([a-zA-Z0-9-]+)\/remote$/);
     if (request.method === "GET" && remoteMatch) {
       return projectRemote(env, remoteMatch[1]);
+    }
+    // Settings: LLM API keys (encrypted at rest)
+    if (request.method === "POST" && url.pathname === "/settings/keys") {
+      return setApiKey(request, env);
+    }
+    if (request.method === "GET" && url.pathname === "/settings/keys") {
+      return getApiKeyStatus(env);
+    }
+    // Start agent Workflows for a task
+    const runMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/run$/);
+    if (request.method === "POST" && runMatch) {
+      return runAgents(request, env, runMatch[1]);
     }
 
     return json({ error: "not found" }, 404);
@@ -581,3 +596,104 @@ async function mergeReal(request: Request, env: Env, taskId: string): Promise<Re
 
 
 
+
+// --- LLM API key management (single user for now) ---
+
+async function setApiKey(request: Request, env: Env): Promise<Response> {
+  let body: { provider?: string; api_key?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.provider !== "openai" && body.provider !== "gemini") {
+    return json({ error: "provider must be 'openai' or 'gemini'" }, 400);
+  }
+  if (!body.api_key || typeof body.api_key !== "string" || body.api_key.length < 8) {
+    return json({ error: "api_key is required" }, 400);
+  }
+  if (!env.KEY_ENCRYPTION_SECRET) {
+    return json({ error: "server not configured for key storage" }, 500);
+  }
+
+  const { encryptKey } = await import("./keys");
+  const { ciphertext, iv } = await encryptKey(body.api_key, env.KEY_ENCRYPTION_SECRET);
+  const now = Math.floor(Date.now() / 1000);
+
+  await env.LEDGER_DB.prepare(
+    `INSERT INTO user_keys (user_id, provider, encrypted_key, iv, spend_usd, updated_at)
+     VALUES ('default', ?, ?, ?, 0, ?)
+     ON CONFLICT(user_id, provider) DO UPDATE SET encrypted_key = ?, iv = ?, updated_at = ?`
+  ).bind(body.provider, ciphertext, iv, now, ciphertext, iv, now).run();
+
+  return json({ provider: body.provider, configured: true });
+}
+
+async function getApiKeyStatus(env: Env): Promise<Response> {
+  const rows = await env.LEDGER_DB.prepare(
+    "SELECT provider, spend_usd FROM user_keys WHERE user_id = 'default'"
+  ).all();
+  const status: Record<string, { configured: boolean; spend_usd: number }> = {
+    openai: { configured: false, spend_usd: 0 },
+    gemini: { configured: false, spend_usd: 0 },
+  };
+  for (const r of rows.results as { provider: string; spend_usd: number }[]) {
+    if (status[r.provider]) {
+      status[r.provider] = { configured: true, spend_usd: r.spend_usd ?? 0 };
+    }
+  }
+  return json(status);
+}
+
+// --- Start agent Workflows ---
+
+const AGENT_STRATEGIES = ["minimal", "defensive", "tested"] as const;
+
+async function runAgents(request: Request, env: Env, taskId: string): Promise<Response> {
+  let body: { provider?: string };
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+  const provider = body.provider ?? "openai";
+  if (provider !== "openai" && provider !== "gemini") {
+    return json({ error: "provider must be 'openai' or 'gemini'" }, 400);
+  }
+
+  // Verify the provider key is configured
+  const keyRow = await env.LEDGER_DB.prepare(
+    "SELECT 1 FROM user_keys WHERE user_id = 'default' AND provider = ?"
+  ).bind(provider).first();
+  if (!keyRow) {
+    return json({ error: `no ${provider} API key configured; POST /settings/keys first` }, 400);
+  }
+
+  const task = await env.LEDGER_DB.prepare(
+    "SELECT status FROM tasks WHERE id = ?"
+  ).bind(taskId).first() as { status: string } | null;
+  if (!task) return json({ error: "task not found" }, 404);
+
+  const forks = await env.LEDGER_DB.prepare(
+    "SELECT id, agent_id FROM forks WHERE task_id = ? AND status != 'completed'"
+  ).bind(taskId).all();
+
+  const started: string[] = [];
+  const results = forks.results as { id: string; agent_id: string }[];
+  for (let i = 0; i < results.length; i++) {
+    const f = results[i];
+    const strategy = AGENT_STRATEGIES[i % AGENT_STRATEGIES.length];
+    const instance = await env.AGENT_RUNNER.create({
+      params: {
+        taskId, forkId: f.id, agentId: f.agent_id, strategy, provider,
+      },
+    });
+    started.push(instance.id);
+  }
+
+  await env.LEDGER_DB.prepare(
+    "UPDATE tasks SET status = 'running' WHERE id = ?"
+  ).bind(taskId).run();
+
+  return json({ started: started.length, workflow_ids: started, provider });
+}
