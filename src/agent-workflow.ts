@@ -36,7 +36,7 @@ const STRATEGY_SYSTEM: Record<string, string> = {
 // Prices per 1M tokens [input, output]
 const PRICES: Record<string, [number, number]> = {
   "gpt-4o-mini": [0.15, 0.60],
-  "gemini-2.0-flash": [0.10, 0.40],
+  "gemini-2.5-flash": [0.30, 2.50],
 };
 
 function tokenSecret(token: string): string {
@@ -73,7 +73,7 @@ export class AgentRunner extends WorkflowEntrypoint<Env, AgentParams> {
 
       const apiKey = await decryptKey(keyRow.encrypted_key, keyRow.iv, this.env.KEY_ENCRYPTION_SECRET);
 
-      const model = provider === "openai" ? "gpt-4o-mini" : "gemini-2.0-flash";
+      const model = provider === "openai" ? "gpt-4o-mini" : "gemini-2.5-flash";
 
       await appendLedger(db, {
         task_id: taskId,
