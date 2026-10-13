@@ -89,7 +89,7 @@ const fmtSpend = (usd: number) => `$${usd.toFixed(4)}`;
             : <span style="color: var(--muted);">Not configured</span>}
         </p>
         <p class="task-meta">Spend: {status ? fmtSpend(status.gemini.spend_usd) : "—"}</p>
-        <p class="task-meta">Model: gemini-2.0-flash</p>
+        <p class="task-meta">Model: gemini-2.5-flash</p>
         <form method="POST" style="margin-top: 1rem;">
           <input type="hidden" name="provider" value="gemini" />
           <div class="form-row">
