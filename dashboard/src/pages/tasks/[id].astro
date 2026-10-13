@@ -110,7 +110,7 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
                   <label for="provider">Provider</label>
                   <select id="provider" name="provider">
                     {keyStatus.openai.configured && <option value="openai">OpenAI (gpt-4o-mini)</option>}
-                    {keyStatus.gemini.configured && <option value="gemini">Gemini (2.5-flash)</option>}
+                    {keyStatus.gemini.configured && <option value="gemini">Gemini (3.8-flash)</option>}
                   </select>
                 </div>
                 <button type="submit" class="btn btn-primary">Start agents</button>
