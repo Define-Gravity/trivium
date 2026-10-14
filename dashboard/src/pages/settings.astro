@@ -47,72 +47,97 @@ const fmtSpend = (usd: number) => `$${usd.toFixed(4)}`;
 </head>
 <body>
   <div class="container">
-    <header>
-      <div>
-        <p><a href="/" style="color: var(--muted);">&larr; Home</a></p>
-        <h1>Settings</h1>
-        <p>Bring your own LLM keys. Keys are encrypted with AES-GCM before storage and never displayed back.</p>
-      </div>
+    <header class="site">
+      <a href="/" class="wordmark">Trivium</a>
+      <nav><a href="/settings" aria-current="page">Settings</a></nav>
     </header>
 
-    {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
-    {success && <div class="card" style="border-color: var(--green); color: var(--green);">{success}</div>}
-
-    <div style="display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
-      <div class="card">
-        <h3 style="margin-top: 0;">OpenAI</h3>
-        <p class="task-meta">
-          Status: {status?.openai.configured
-            ? <span style="color: var(--green);">✓ Configured</span>
-            : <span style="color: var(--muted);">Not configured</span>}
-        </p>
-        <p class="task-meta">Spend: {status ? fmtSpend(status.openai.spend_usd) : "—"}</p>
-        <p class="task-meta">Model: gpt-4o-mini</p>
-        <form method="POST" style="margin-top: 1rem;">
-          <input type="hidden" name="provider" value="openai" />
-          <div class="form-row">
-            <label for="openai-key">API key</label>
-            <input type="password" id="openai-key" name="api_key" required autocomplete="off"
-              placeholder={status?.openai.configured ? "•••••••• (set — enter new to replace)" : "sk-..."} />
-          </div>
-          <button type="submit" class="btn btn-primary">
-            {status?.openai.configured ? "Replace key" : "Save key"}
-          </button>
-        </form>
-      </div>
-
-      <div class="card">
-        <h3 style="margin-top: 0;">Gemini</h3>
-        <p class="task-meta">
-          Status: {status?.gemini.configured
-            ? <span style="color: var(--green);">✓ Configured</span>
-            : <span style="color: var(--muted);">Not configured</span>}
-        </p>
-        <p class="task-meta">Spend: {status ? fmtSpend(status.gemini.spend_usd) : "—"}</p>
-        <p class="task-meta">Model: gemini-3.8-flash</p>
-        <form method="POST" style="margin-top: 1rem;">
-          <input type="hidden" name="provider" value="gemini" />
-          <div class="form-row">
-            <label for="gemini-key">API key</label>
-            <input type="password" id="gemini-key" name="api_key" required autocomplete="off"
-              placeholder={status?.gemini.configured ? "•••••••• (set — enter new to replace)" : "AIza..."} />
-          </div>
-          <button type="submit" class="btn btn-primary">
-            {status?.gemini.configured ? "Replace key" : "Save key"}
-          </button>
-        </form>
-      </div>
+    <div class="page-head">
+      <a class="crumb" href="/">&larr; Home</a>
+      <h1>Settings</h1>
+      <p class="lede">Bring your own LLM keys. Keys are encrypted with AES-GCM before storage and never displayed back.</p>
     </div>
 
-    <div class="card" style="margin-top: 1.5rem;">
-      <h3 style="margin-top: 0;">How it works</h3>
-      <ul style="color: var(--muted); padding-left: 1.25rem; margin-bottom: 0;">
-        <li>Keys are encrypted with AES-GCM (PBKDF2-derived key from a server secret) before hitting D1.</li>
-        <li>Workflows decrypt keys in-memory only, for the duration of the LLM call.</li>
-        <li>Keys are never logged, never returned by any API, and never leave Cloudflare.</li>
-        <li>Spend is tracked per provider from actual token usage reported by the API.</li>
-      </ul>
-    </div>
+    {error && <div class="alert alert-error" role="alert">{error}</div>}
+    {success && <div class="alert alert-success" role="alert">{success}</div>}
+
+    <section class="section" aria-label="LLM providers">
+      <div class="provider-grid">
+        <div class="card">
+          <h3>OpenAI</h3>
+          <div class="kv">
+            <div class="kv-row">
+              <span class="kv-key">Status</span>
+              {status?.openai.configured
+                ? <span class="kv-val ok">✓ Configured</span>
+                : <span class="kv-val missing">Not configured</span>}
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Spend</span>
+              <span class="kv-val">{status ? fmtSpend(status.openai.spend_usd) : "—"}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Model</span>
+              <span class="kv-val">gpt-4o-mini</span>
+            </div>
+          </div>
+          <form method="POST" style="margin-top: 1.1rem;">
+            <input type="hidden" name="provider" value="openai" />
+            <div class="field">
+              <label for="openai-key">API key</label>
+              <input type="password" id="openai-key" name="api_key" required autocomplete="off" class="mono-input"
+                placeholder={status?.openai.configured ? "•••••••• (set — enter new to replace)" : "sk-..."} />
+            </div>
+            <button type="submit" class="btn btn-primary">
+              {status?.openai.configured ? "Replace key" : "Save key"}
+            </button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Gemini</h3>
+          <div class="kv">
+            <div class="kv-row">
+              <span class="kv-key">Status</span>
+              {status?.gemini.configured
+                ? <span class="kv-val ok">✓ Configured</span>
+                : <span class="kv-val missing">Not configured</span>}
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Spend</span>
+              <span class="kv-val">{status ? fmtSpend(status.gemini.spend_usd) : "—"}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Model</span>
+              <span class="kv-val">gemini-3.8-flash</span>
+            </div>
+          </div>
+          <form method="POST" style="margin-top: 1.1rem;">
+            <input type="hidden" name="provider" value="gemini" />
+            <div class="field">
+              <label for="gemini-key">API key</label>
+              <input type="password" id="gemini-key" name="api_key" required autocomplete="off" class="mono-input"
+                placeholder={status?.gemini.configured ? "•••••••• (set — enter new to replace)" : "AIza..."} />
+            </div>
+            <button type="submit" class="btn btn-primary">
+              {status?.gemini.configured ? "Replace key" : "Save key"}
+            </button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-label="How key storage works">
+      <div class="card">
+        <h3>How it works</h3>
+        <ul class="clean">
+          <li>Keys are encrypted with AES-GCM (PBKDF2-derived key from a server secret) before hitting D1.</li>
+          <li>Workflows decrypt keys in-memory only, for the duration of the LLM call.</li>
+          <li>Keys are never logged, never returned by any API, and never leave Cloudflare.</li>
+          <li>Spend is tracked per provider from actual token usage reported by the API.</li>
+        </ul>
+      </div>
+    </section>
   </div>
 </body>
 </html>
