@@ -42,14 +42,17 @@ export function createApi(binding: { fetch: typeof fetch }) {
       request<{ reviewed: { forkId: string; status: string }[] }>(`/tasks/${id}/review`, {
         method: "POST",
       }),
-    merge: (id: string) =>
+    merge: (id: string, comment?: string) =>
       request<{ merged: string; agent: string }>(`/tasks/${id}/merge`, {
         method: "POST",
+        body: { comment },
       }),
-    mergeReal: (id: string) =>
+    mergeReal: (id: string, comment?: string) =>
       request<{ merged: boolean; merge_commit: string; agent: string }>(`/tasks/${id}/merge-real`, {
         method: "POST",
+        body: { comment },
       }),
+
     listProjects: () => request<Project[]>("/projects"),
     createProject: (name: string) =>
       request<{ project_id: string; name: string; repo_name: string }>("/projects", {
