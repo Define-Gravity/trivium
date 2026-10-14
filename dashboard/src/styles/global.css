@@ -652,3 +652,29 @@ ul.clean li::marker { color: var(--faint); }
   .row { padding: 0.9rem 1rem; }
   .action-bar { padding: 0.9rem 1rem; }
 }
+
+/* ---------- Fork contents / compare ---------- */
+.file-list { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+.file-list li {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: 0.35rem 0; border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.file-list li:first-child { border-top: 0; }
+.file-list .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-lines { color: var(--faint); white-space: nowrap; }
+.compare-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem; margin-top: 1.25rem;
+}
+.compare-col { min-width: 0; }
+.compare-col .fork-top { margin-bottom: 0.5rem; }
+.code-view {
+  background: #0c0f15; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 0.6rem 0; margin: 0;
+  overflow: auto; max-height: 520px;
+  font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.55;
+}
+.code-view code { display: block; }
+.code-view .cl { display: block; padding: 0 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-view .ln-add { background: var(--green-soft); }

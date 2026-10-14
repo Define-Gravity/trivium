@@ -284,6 +284,12 @@ export default {
     if (request.method === "POST" && mergeRealMatch) {
       return mergeReal(request, env, mergeRealMatch[1]);
     }
+    // Fork file tree: list every file in a fork's repo at main with contents.
+    // Powers the dashboard's fork comparison view.
+    const treeMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/forks\/([a-zA-Z0-9-]+)\/tree$/);
+    if (request.method === "GET" && treeMatch) {
+      return forkTree(env, treeMatch[1], treeMatch[2]);
+    }
     // Project endpoints
     if (request.method === "POST" && url.pathname === "/projects") {
       return createProject(request, env);
@@ -718,4 +724,73 @@ async function runAgents(request: Request, env: Env, taskId: string): Promise<Re
   ).bind(taskId).run();
 
   return json({ started: started.length, workflow_ids: started, provider });
+}
+
+// --- Fork file tree ---
+
+// Clone a fork's repo shallow and return every text file with its contents.
+// Lets the dashboard show what each agent actually built and compare forks.
+async function forkTree(env: Env, taskId: string, forkId: string): Promise<Response> {
+  const fork = await env.LEDGER_DB.prepare(
+    "SELECT id, agent_id, repo_name FROM forks WHERE id = ? AND task_id = ?"
+  ).bind(forkId, taskId).first() as { id: string; agent_id: string; repo_name: string } | null;
+  if (!fork) return json({ error: "fork not found" }, 404);
+
+  const repo = await env.ARTIFACTS.get(fork.repo_name);
+  if (!repo) return json({ error: "repo not found" }, 404);
+  const { remote } = await repo.info() as { remote: string };
+  const tokenResult = await repo.createToken("read", 300);
+  const password = (tokenResult.plaintext as string).split("?expires=")[0];
+  const onAuth = () => ({ username: "x", password });
+
+  const git = (await import("isomorphic-git")).default;
+  const http = (await import("./git-http-client.js")).default;
+  const { MemoryFS } = await import("./memory-fs");
+
+  const fs = new MemoryFS();
+  const dir = "/tree-work";
+  const fsArg = fs as unknown as Parameters<typeof git.clone>[0]["fs"];
+  try {
+    await git.clone({ fs: fsArg, http, dir, url: remote, ref: "main", depth: 1, singleBranch: true, onAuth });
+  } catch (e) {
+    return json({ error: `clone failed: ${e instanceof Error ? e.message : String(e)}` }, 502);
+  }
+
+  const files: { path: string; lines: number; size: number; content: string }[] = [];
+  const MAX_TOTAL_BYTES = 500 * 1024;
+  let totalBytes = 0;
+
+  async function walk(rel: string): Promise<void> {
+    const full = rel ? `${dir}/${rel}` : dir;
+    let entries: string[];
+    try {
+      entries = await (fs.promises as unknown as { readdir(p: string): Promise<string[]> }).readdir(full);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      if (!rel && name === ".git") continue;
+      const relPath = rel ? `${rel}/${name}` : name;
+      const stat = await (fs.promises as unknown as { stat(p: string): Promise<{ isDirectory(): boolean }> }).stat(`${dir}/${relPath}`);
+      if (stat.isDirectory()) {
+        await walk(relPath);
+        continue;
+      }
+      if (totalBytes >= MAX_TOTAL_BYTES) continue;
+      const raw = await (fs.promises as unknown as { readFile(p: string): Promise<Uint8Array> }).readFile(`${dir}/${relPath}`);
+      if (raw.slice(0, 8000).includes(0)) continue; // skip binaries
+      const text = new TextDecoder().decode(raw);
+      totalBytes += raw.length;
+      files.push({
+        path: relPath,
+        lines: text.split("\n").length,
+        size: raw.length,
+        content: text.slice(0, 100 * 1024),
+      });
+    }
+  }
+  await walk("");
+  files.sort((a, b) => a.path.localeCompare(b.path));
+
+  return json({ fork_id: fork.id, agent_id: fork.agent_id, files });
 }

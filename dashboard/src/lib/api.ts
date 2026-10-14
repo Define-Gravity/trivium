@@ -73,6 +73,8 @@ export function createApi(binding: { fetch: typeof fetch }) {
         method: "POST",
         body: { provider },
       }),
+    getForkTree: (taskId: string, forkId: string) =>
+      request<{ fork_id: string; agent_id: string; files: ForkFile[] }>(`/tasks/${taskId}/forks/${forkId}/tree`),
   };
 }
 
@@ -107,6 +109,13 @@ export interface Fork {
   status: string;
   created_at: number;
   completed_at: number | null;
+}
+
+export interface ForkFile {
+  path: string;
+  lines: number;
+  size: number;
+  content: string;
 }
 
 export interface LedgerEvent {

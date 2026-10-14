@@ -105,6 +105,46 @@ if (ledger && task) {
     }
   }
 }
+
+// Fork contents: what each agent actually built, for side-by-side comparison.
+// Each tree is a shallow clone of the fork's repo at main; failures resolve
+// to null so one bad fork never breaks the page.
+type ForkTree = { fork_id: string; agent_id: string; files: { path: string; lines: number; size: number; content: string }[] } | null;
+let trees: ForkTree[] = [];
+if (task && id) {
+  trees = await Promise.all(task.forks.map((f: any) => api.getForkTree(id, f.id).catch(() => null)));
+}
+const treeByFork = new Map<string, NonNullable<ForkTree>>();
+for (const t of trees) {
+  if (t) treeByFork.set(t.fork_id, t);
+}
+
+// Files present in 2 or more forks can be compared.
+const fileForkCounts = new Map<string, number>();
+for (const t of treeByFork.values()) {
+  for (const f of t.files) fileForkCounts.set(f.path, (fileForkCounts.get(f.path) ?? 0) + 1);
+}
+const commonFiles = [...fileForkCounts.entries()]
+  .filter(([, c]) => c >= 2)
+  .map(([p]) => p)
+  .sort();
+
+const compareFile = Astro.url.searchParams.get("file");
+const compareValid = !!compareFile && commonFiles.includes(compareFile);
+
+// Baseline for highlighting: the merged fork's version of the file,
+// otherwise the first fork that has it. Lines in other forks that do not
+// appear in the baseline are highlighted as unique to that fork.
+function baselineContent(path: string): string {
+  const ordered = [...(task?.forks ?? [])].sort((a: any, b: any) =>
+    a.status === "merged" ? -1 : b.status === "merged" ? 1 : 0);
+  for (const f of ordered) {
+    const file = treeByFork.get(f.id)?.files.find((x) => x.path === path);
+    if (file) return file.content;
+  }
+  return "";
+}
+const baselineSet = new Set(compareValid ? baselineContent(compareFile!).split("\n") : []);
 ---
 
 <html lang="en">
@@ -278,6 +318,76 @@ if (ledger && task) {
               ))}
             </div>
           </section>
+        )}
+
+        {[...treeByFork.values()].some((t) => t.files.length > 0) && (
+        <section class="section" aria-label="Fork contents">
+          <div class="section-head">
+            <h2>Fork contents</h2>
+            <p>What each agent actually built. Select a file to compare the implementations side by side. Highlighted lines are unique to that fork.</p>
+          </div>
+          <div class="fork-grid">
+            {task.forks.map((f: any) => {
+              const t = treeByFork.get(f.id);
+              const totalLines = t ? t.files.reduce((n, x) => n + x.lines, 0) : 0;
+              return (
+                <div class={`fork-card ${f.status === "merged" ? "winner" : ""}`}>
+                  <div class="fork-top">
+                    <span class="fork-agent">{f.agent_id}</span>
+                    <span class={`badge badge-${f.status}`}>{f.status}</span>
+                  </div>
+                  {t && t.files.length > 0 ? (
+                    <>
+                      <ul class="file-list">
+                        {t.files.map((x) => (
+                          <li><span class="mono">{x.path}</span><span class="file-lines">{x.lines} lines</span></li>
+                        ))}
+                      </ul>
+                      <p class="fork-detail">{t.files.length} files, {totalLines} lines</p>
+                    </>
+                  ) : (
+                    <p class="event-meta" style="margin-bottom: 0;">No files yet.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {commonFiles.length > 0 && (
+            <form method="GET" class="form-row-inline" style="margin-top: 1.25rem;">
+              <div class="field">
+                <label for="compare-file">Compare file</label>
+                <select id="compare-file" name="file">
+                  {commonFiles.map((p) => (
+                    <option value={p} selected={p === compareFile}>{p}</option>
+                  ))}
+                </select>
+              </div>
+              <button type="submit" class="btn">Compare</button>
+            </form>
+          )}
+          {compareValid && (
+            <div class="compare-grid">
+              {task.forks.map((f: any) => {
+                const file = treeByFork.get(f.id)?.files.find((x) => x.path === compareFile);
+                return (
+                  <div class="compare-col">
+                    <div class="fork-top">
+                      <span class="fork-agent">{f.agent_id}</span>
+                      {f.status === "merged" && <span class="fork-selected">✓ Selected</span>}
+                    </div>
+                    {file ? (
+                      <pre class="code-view"><code>{file.content.split("\n").map((line) => (
+                        <span class={`cl${line.trim() !== "" && !baselineSet.has(line) ? " ln-add" : ""}`}>{line === "" ? " " : line}</span>
+                      ))}</code></pre>
+                    ) : (
+                      <p class="event-meta">This fork does not have that file.</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
         )}
 
         <section class="section" aria-label="Audit ledger">
