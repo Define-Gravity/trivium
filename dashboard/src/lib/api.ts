@@ -75,6 +75,10 @@ export function createApi(binding: { fetch: typeof fetch }) {
       }),
     getForkTree: (taskId: string, forkId: string) =>
       request<{ fork_id: string; agent_id: string; files: ForkFile[] }>(`/tasks/${taskId}/forks/${forkId}/tree`),
+    judgeTask: (taskId: string) =>
+      request<{ recommendation: { agent_id: string; reasons: string[] }; agents: JudgeAgent[]; costUsd: number }>(`/tasks/${taskId}/judge`, {
+        method: "POST",
+      }),
   };
 }
 
@@ -116,6 +120,13 @@ export interface ForkFile {
   lines: number;
   size: number;
   content: string;
+}
+
+export interface JudgeAgent {
+  agent_id: string;
+  approach: string;
+  strengths: string[];
+  concerns: string[];
 }
 
 export interface LedgerEvent {

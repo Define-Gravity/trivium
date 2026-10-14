@@ -1,6 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { appendLedger, verifyLedger } from "./ledger";
 import { checkBudget } from "./governor";
+import { decryptKey } from "./keys";
 
 export { MergeCoordinator } from "./coordinator";
 export { ReviewGate } from "./review";
@@ -16,6 +17,8 @@ export { AgentRunner } from "./agent-workflow";
 // GET  /tasks/:id              task detail with ledger
 // GET  /ledger/:id             verify and return the hash chain
 // POST /tasks/:id/merge-real   merge winner into project main (real git merge)
+// GET  /tasks/:id/forks/:forkId/tree  fork file tree with contents
+// POST /tasks/:id/judge        merge advisor: compare forks, recommend a pick
 
 interface Env {
   LEDGER_DB: D1Database;
@@ -289,6 +292,11 @@ export default {
     const treeMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/forks\/([a-zA-Z0-9-]+)\/tree$/);
     if (request.method === "GET" && treeMatch) {
       return forkTree(env, treeMatch[1], treeMatch[2]);
+    }
+    // Merge advisor: LLM compares the forks' differing files and recommends a pick.
+    const judgeMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/judge$/);
+    if (request.method === "POST" && judgeMatch) {
+      return judgeTask(env, judgeMatch[1]);
     }
     // Project endpoints
     if (request.method === "POST" && url.pathname === "/projects") {
@@ -728,16 +736,13 @@ async function runAgents(request: Request, env: Env, taskId: string): Promise<Re
 
 // --- Fork file tree ---
 
-// Clone a fork's repo shallow and return every text file with its contents.
-// Lets the dashboard show what each agent actually built and compare forks.
-async function forkTree(env: Env, taskId: string, forkId: string): Promise<Response> {
-  const fork = await env.LEDGER_DB.prepare(
-    "SELECT id, agent_id, repo_name FROM forks WHERE id = ? AND task_id = ?"
-  ).bind(forkId, taskId).first() as { id: string; agent_id: string; repo_name: string } | null;
-  if (!fork) return json({ error: "fork not found" }, 404);
+interface TreeFile { path: string; lines: number; size: number; content: string }
 
-  const repo = await env.ARTIFACTS.get(fork.repo_name);
-  if (!repo) return json({ error: "repo not found" }, 404);
+// Clone a fork's repo shallow and return every text file with its contents.
+// Shared by the tree endpoint and the merge advisor.
+async function getForkFiles(env: Env, repoName: string): Promise<TreeFile[]> {
+  const repo = await env.ARTIFACTS.get(repoName);
+  if (!repo) throw new Error(`repo ${repoName} not found`);
   const { remote } = await repo.info() as { remote: string };
   const tokenResult = await repo.createToken("read", 300);
   const password = (tokenResult.plaintext as string).split("?expires=")[0];
@@ -753,10 +758,10 @@ async function forkTree(env: Env, taskId: string, forkId: string): Promise<Respo
   try {
     await git.clone({ fs: fsArg, http, dir, url: remote, ref: "main", depth: 1, singleBranch: true, onAuth });
   } catch (e) {
-    return json({ error: `clone failed: ${e instanceof Error ? e.message : String(e)}` }, 502);
+    throw new Error(`clone failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  const files: { path: string; lines: number; size: number; content: string }[] = [];
+  const files: TreeFile[] = [];
   const MAX_TOTAL_BYTES = 500 * 1024;
   let totalBytes = 0;
 
@@ -792,5 +797,196 @@ async function forkTree(env: Env, taskId: string, forkId: string): Promise<Respo
   await walk("");
   files.sort((a, b) => a.path.localeCompare(b.path));
 
-  return json({ fork_id: fork.id, agent_id: fork.agent_id, files });
+  return files;
+}
+
+// GET /tasks/:id/forks/:forkId/tree handler: look up the fork, then delegate.
+async function forkTree(env: Env, taskId: string, forkId: string): Promise<Response> {
+  const fork = await env.LEDGER_DB.prepare(
+    "SELECT id, agent_id, repo_name FROM forks WHERE id = ? AND task_id = ?"
+  ).bind(forkId, taskId).first() as { id: string; agent_id: string; repo_name: string } | null;
+  if (!fork) return json({ error: "fork not found" }, 404);
+  try {
+    const files = await getForkFiles(env, fork.repo_name);
+    return json({ fork_id: fork.id, agent_id: fork.agent_id, files });
+  } catch (e) {
+    return json({ error: `clone failed: ${e instanceof Error ? e.message : String(e)}` }, 502);
+  }
+}
+
+// --- Merge advisor ---
+
+// One reviewer call over the files that differ between forks. Returns a
+// per-agent breakdown plus a recommended pick with concrete reasons.
+// The report is written to the ledger; merging stays a human decision.
+const JUDGE_PRICES: Record<string, [number, number]> = {
+  "gpt-4o-mini": [0.15, 0.6],
+  "gemini-3.8-flash": [0.75, 3.75],
+};
+
+async function judgeTask(env: Env, taskId: string): Promise<Response> {
+  const task = await env.LEDGER_DB.prepare(
+    "SELECT id, repo, instructions FROM tasks WHERE id = ?"
+  ).bind(taskId).first() as { id: string; repo: string; instructions: string } | null;
+  if (!task) return json({ error: "task not found" }, 404);
+
+  const forks = await env.LEDGER_DB.prepare(
+    "SELECT id, agent_id, repo_name FROM forks WHERE task_id = ?"
+  ).bind(taskId).all() as unknown as { results: { id: string; agent_id: string; repo_name: string }[] };
+  if (forks.results.length < 2) return json({ error: "need at least 2 forks to compare" }, 409);
+
+  const startedRows = await env.LEDGER_DB.prepare(
+    "SELECT actor, details FROM ledger WHERE task_id = ? AND event_type = 'agent.started'"
+  ).bind(taskId).all() as unknown as { results: { actor: string; details: string }[] };
+  const strategyByAgent = new Map<string, string>();
+  for (const r of startedRows.results) {
+    try {
+      const d = JSON.parse(r.details) as { strategy?: string };
+      if (d.strategy) strategyByAgent.set(r.actor, d.strategy);
+    } catch { /* ignore unparseable rows */ }
+  }
+
+  // Clone forks in parallel; skip ones that cannot be read.
+  const settled = await Promise.all(forks.results.map(async (f) => {
+    try {
+      const files = await getForkFiles(env, f.repo_name);
+      return { agent_id: f.agent_id, strategy: strategyByAgent.get(f.agent_id) ?? "unknown", files };
+    } catch {
+      return null;
+    }
+  }));
+  const trees = settled.filter((t): t is NonNullable<typeof t> => t !== null && t.files.length > 0);
+  if (trees.length < 2) return json({ error: "need at least 2 readable forks to compare" }, 409);
+
+  // Keep only files that differ between forks; identical base files are noise.
+  const byPath = new Map<string, Map<string, string>>();
+  for (const t of trees) {
+    for (const f of t.files) {
+      if (!byPath.has(f.path)) byPath.set(f.path, new Map());
+      byPath.get(f.path)!.set(t.agent_id, f.content);
+    }
+  }
+  const differing: { path: string; versions: { agent_id: string; content: string }[] }[] = [];
+  for (const [path, versions] of byPath) {
+    const contents = [...versions.values()];
+    if (!contents.every((c) => c === contents[0])) {
+      differing.push({ path, versions: [...versions.entries()].map(([agent_id, content]) => ({ agent_id, content })) });
+    }
+  }
+  if (differing.length === 0) return json({ error: "forks are identical; nothing to compare" }, 409);
+
+  const MAX_FILE_CHARS = 8000;
+  const MAX_TOTAL_CHARS = 60000;
+  let totalChars = 0;
+  const chunks: string[] = [];
+  for (const d of differing) {
+    for (const v of d.versions) {
+      const header = `--- ${v.agent_id} / ${d.path} ---\n`;
+      const body = v.content.slice(0, MAX_FILE_CHARS);
+      if (totalChars + header.length + body.length > MAX_TOTAL_CHARS) break;
+      chunks.push(header + body);
+      totalChars += header.length + body.length;
+    }
+  }
+
+  const strategyLine = trees.map((t) => `${t.agent_id} (${t.strategy})`).join(", ");
+  const prompt =
+    `You are a senior staff engineer reviewing competing implementations of the same task.\n` +
+    `Task: ${task.instructions}\n` +
+    `Agents and strategies: ${strategyLine}.\n\n` +
+    `Below are the files that DIFFER between the forks. Identical base files are omitted.\n\n` +
+    chunks.join("\n\n") +
+    `\n\nCompare the implementations and respond with JSON only, no other text:\n` +
+    `{"agents": [{"agent_id": "...", "approach": "one sentence", "strengths": ["...", "..."], "concerns": ["...", "..."]}], ` +
+    `"recommendation": {"agent_id": "...", "reasons": ["...", "...", "..."]}}\n` +
+    `Rules: reasons must cite concrete code differences you observed. Max 3 items per list.`;
+
+  let provider: "gemini" | "openai" = "gemini";
+  let keyRow = await env.LEDGER_DB.prepare(
+    "SELECT encrypted_key, iv FROM user_keys WHERE user_id = 'default' AND provider = 'gemini'"
+  ).first() as { encrypted_key: string; iv: string } | null;
+  if (!keyRow) {
+    provider = "openai";
+    keyRow = await env.LEDGER_DB.prepare(
+      "SELECT encrypted_key, iv FROM user_keys WHERE user_id = 'default' AND provider = 'openai'"
+    ).first() as { encrypted_key: string; iv: string } | null;
+  }
+  if (!keyRow) return json({ error: "no LLM API key configured" }, 409);
+  const apiKey = await decryptKey(keyRow.encrypted_key, keyRow.iv, env.KEY_ENCRYPTION_SECRET);
+  const model = provider === "gemini" ? "gemini-3.8-flash" : "gpt-4o-mini";
+
+  let llmText: string;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  if (provider === "openai") {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_tokens: 2000,
+        temperature: 0.3,
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json() as {
+      choices: { message: { content: string } }[];
+      usage?: { prompt_tokens: number; completion_tokens: number };
+    };
+    llmText = data.choices[0].message.content;
+    inputTokens = data.usage?.prompt_tokens ?? 0;
+    outputTokens = data.usage?.completion_tokens ?? 0;
+  } else {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json", maxOutputTokens: 2000, temperature: 0.3 },
+        }),
+      }
+    );
+    if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json() as {
+      candidates: { content: { parts: { text: string }[] } }[];
+      usageMetadata?: { promptTokenCount: number; candidatesTokenCount: number };
+    };
+    llmText = data.candidates[0].content.parts[0].text;
+    inputTokens = data.usageMetadata?.promptTokenCount ?? 0;
+    outputTokens = data.usageMetadata?.candidatesTokenCount ?? 0;
+  }
+
+  const cleaned = llmText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  let parsed: {
+    agents: { agent_id: string; approach: string; strengths: string[]; concerns: string[] }[];
+    recommendation: { agent_id: string; reasons: string[] };
+  };
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw new Error("judge did not return valid JSON");
+  }
+  if (!parsed.recommendation?.agent_id || !Array.isArray(parsed.agents)) {
+    throw new Error("judge response missing recommendation or agents");
+  }
+
+  const [inPrice, outPrice] = JUDGE_PRICES[model] ?? [0.15, 0.6];
+  const costUsd = (inputTokens / 1e6) * inPrice + (outputTokens / 1e6) * outPrice;
+
+  await env.LEDGER_DB.prepare(
+    "UPDATE user_keys SET spend_usd = spend_usd + ? WHERE user_id = 'default' AND provider = ?"
+  ).bind(costUsd, provider).run();
+
+  await appendLedger(env.LEDGER_DB, {
+    task_id: taskId,
+    event_type: "judge.reported",
+    actor: "judge",
+    details: { model, provider, costUsd, recommendation: parsed.recommendation, agents: parsed.agents },
+  });
+
+  return json({ recommendation: parsed.recommendation, agents: parsed.agents, costUsd });
 }

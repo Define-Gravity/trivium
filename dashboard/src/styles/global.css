@@ -678,3 +678,34 @@ ul.clean li::marker { color: var(--faint); }
 .code-view code { display: block; }
 .code-view .cl { display: block; padding: 0 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .code-view .ln-add { background: var(--green-soft); }
+
+/* Merge advisor card */
+.judge-card {
+  margin-bottom: 1.25rem;
+  border-color: #3d2f5c;
+}
+.judge-card .clean {
+  margin: 0.5rem 0 0;
+}
+.judge-card .clean li {
+  margin-bottom: 0.25rem;
+}
+.judge-agents {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.judge-agent {
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.judge-agent p {
+  margin: 0.3rem 0;
+  font-size: 0.88rem;
+}
+.btn-small {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+}

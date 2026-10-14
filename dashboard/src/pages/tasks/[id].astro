@@ -23,6 +23,7 @@ if (Astro.request.method === "POST") {
     if (action === "review") await api.runReview(id);
     if (action === "merge") await api.merge(id, comment || undefined);
     if (action === "merge-real") await api.mergeReal(id, comment || undefined);
+    if (action === "judge") await api.judgeTask(id);
     if (action === "run-agents") {
       const provider = String(form.get("provider") ?? "openai");
       if (provider !== "openai" && provider !== "gemini") throw new Error("invalid provider");
@@ -145,6 +146,26 @@ function baselineContent(path: string): string {
   return "";
 }
 const baselineSet = new Set(compareValid ? baselineContent(compareFile!).split("\n") : []);
+
+// Merge advisor report, if the judge has run. Latest judge.reported event wins.
+let judgeReport: {
+  recommendation: { agent_id: string; reasons: string[] };
+  agents: { agent_id: string; approach: string; strengths: string[]; concerns: string[] }[];
+} | null = null;
+if (ledger) {
+  for (let i = ledger.events.length - 1; i >= 0; i--) {
+    const e = ledger.events[i];
+    if (e.event_type === "judge.reported") {
+      try {
+        const d = JSON.parse(e.details);
+        if (d.recommendation?.agent_id && Array.isArray(d.agents)) {
+          judgeReport = { recommendation: d.recommendation, agents: d.agents };
+        }
+      } catch { /* ignore unparseable report */ }
+      break;
+    }
+  }
+}
 ---
 
 <html lang="en">
@@ -326,6 +347,37 @@ const baselineSet = new Set(compareValid ? baselineContent(compareFile!).split("
             <h2>Fork contents</h2>
             <p>What each agent actually built. Select a file to compare the implementations side by side. Highlighted lines are unique to that fork.</p>
           </div>
+          {judgeReport ? (
+            <div class="card judge-card">
+              <div class="fork-top">
+                <span class="fork-agent">Merge advisor</span>
+                <span class="badge badge-review">suggested pick: {judgeReport.recommendation.agent_id}</span>
+              </div>
+              <ul class="clean">
+                {judgeReport.recommendation.reasons.map((r) => <li>{r}</li>)}
+              </ul>
+              <div class="judge-agents">
+                {judgeReport.agents.map((a) => (
+                  <div class="judge-agent">
+                    <span class="mono">{a.agent_id}</span>
+                    <p>{a.approach}</p>
+                    <p><span class="kv-key">Strengths</span> {a.strengths.join("; ")}</p>
+                    <p><span class="kv-key">Concerns</span> {a.concerns.join("; ")}</p>
+                  </div>
+                ))}
+              </div>
+              <form method="POST">
+                <input type="hidden" name="action" value="judge" />
+                <button type="submit" class="btn btn-small">Run again</button>
+              </form>
+            </div>
+          ) : (
+            <form method="POST">
+              <input type="hidden" name="action" value="judge" />
+              <button type="submit" class="btn btn-primary">Compare implementations</button>
+              <p class="event-meta" style="margin-top: 0.5rem;">One reviewer call over the files that differ between forks. Recorded in the ledger. You still make the merge call.</p>
+            </form>
+          )}
           <div class="fork-grid">
             {task.forks.map((f: any) => {
               const t = treeByFork.get(f.id);
