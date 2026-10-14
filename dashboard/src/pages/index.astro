@@ -65,83 +65,114 @@ const formatDate = (epoch: number) =>
 </head>
 <body>
   <div class="container">
-    <header>
-      <div>
-        <h1>Trivium</h1>
-        <p>One task in. N agents. One audited result.</p>
-      </div>
-      <div>
-        <a href="/settings" class="btn">Settings</a>
-      </div>
+    <header class="site">
+      <a href="/" class="wordmark">Trivium</a>
+      <nav><a href="/settings">Settings</a></nav>
     </header>
 
-    {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
+    <div class="page-head">
+      <p class="kicker">Dashboard</p>
+      <h1>One task in. N agents. One audited result.</h1>
+    </div>
 
-    <h2>Projects</h2>
-    <form class="create-task" method="POST" style="margin-bottom: 1.5rem;">
-      <input type="hidden" name="_form" value="project" />
-      <h3 style="margin-top: 0;">New project</h3>
-      <div class="form-row">
-        <label for="project-name">Project name</label>
-        <input type="text" id="project-name" name="name" required maxlength="64" placeholder="my-project" />
+    {error && <div class="alert alert-error" role="alert">{error}</div>}
+
+    <section class="section" aria-label="Projects">
+      <div class="section-head">
+        <h2>Projects</h2>
+        <p>A project is a repo on Artifacts that agents work against.</p>
       </div>
-      <button type="submit" class="btn btn-primary">Create project</button>
-    </form>
 
-    {projects.length === 0 && !error && (
-      <div class="card"><p style="color: var(--muted); margin: 0;">No projects yet. Create one above.</p></div>
-    )}
-    {projects.map((p) => (
-      <a href={`/projects/${p.id}`} class="task-row" style="text-decoration: none; color: inherit; display: flex;">
-        <div>
-          <div><strong>{p.name}</strong></div>
-          <div class="task-meta">{p.repo_name} &middot; {formatDate(p.created_at)}</div>
-          <div class="task-id">{p.id}</div>
+      <form class="form-card" method="POST">
+        <input type="hidden" name="_form" value="project" />
+        <h3>New project</h3>
+        <div class="field">
+          <label for="project-name">Project name</label>
+          <input type="text" id="project-name" name="name" required maxlength="64" placeholder="my-project" />
         </div>
-      </a>
-    ))}
+        <button type="submit" class="btn btn-primary">Create project</button>
+      </form>
 
-    <h2 style="margin-top: 2rem;">New task</h2>
-    <form class="create-task" method="POST">
-      <input type="hidden" name="_form" value="task" />
-      <div class="form-row">
-        <label for="repo">Repository name</label>
-        <input type="text" id="repo" name="repo" required maxlength="64" placeholder="my-project" />
+      {projects.length === 0 && !error && (
+        <div class="empty">No projects yet. Create one above.</div>
+      )}
+      <div class="row-list">
+        {projects.map((p) => (
+          <a href={`/projects/${p.id}`} class="row project-card">
+            <div class="row-main">
+              <div class="row-title">{p.name}</div>
+              <div class="row-meta">
+                <span class="mono">{p.repo_name}</span>
+                <span>{formatDate(p.created_at)}</span>
+              </div>
+            </div>
+            <div class="row-side">
+              <span class="row-arrow" aria-hidden="true">&rarr;</span>
+            </div>
+          </a>
+        ))}
       </div>
-      <div class="form-row">
-        <label for="instructions">Instructions for agents</label>
-        <textarea id="instructions" name="instructions" required maxlength="2000" placeholder="Describe what the agents should build..."></textarea>
-      </div>
-      <div class="form-row">
-        <label for="agent_count">Agents (1-5)</label>
-        <input type="number" id="agent_count" name="agent_count" value="3" min="1" max="5" />
-      </div>
-      <div class="form-row">
-        <label for="project_id">Project (optional)</label>
-        <select id="project_id" name="project_id">
-          <option value="">No project (legacy)</option>
-          {projects.map((p) => (
-            <option value={p.id}>{p.name}</option>
-          ))}
-        </select>
-      </div>
-      <button type="submit" class="btn btn-primary">Dispatch agents</button>
-    </form>
+    </section>
 
-    <h2>Tasks</h2>
-    {tasks.length === 0 && !error && (
-      <div class="card"><p style="color: var(--muted); margin: 0;">No tasks yet. Dispatch one above.</p></div>
-    )}
-    {tasks.map((t) => (
-      <a href={`/tasks/${t.id}`} class="task-row" style="text-decoration: none; color: inherit; display: flex;">
-        <div>
-          <div><strong>{t.repo}</strong></div>
-          <div class="task-meta">{t.agent_count} agents &middot; {formatDate(t.created_at)}</div>
-          <div class="task-id">{t.id}</div>
+    <section class="section" aria-label="New task">
+      <div class="section-head">
+        <h2>New task</h2>
+        <p>Describe the work. Each agent gets its own fork and works it independently.</p>
+      </div>
+      <form class="form-card" method="POST">
+        <input type="hidden" name="_form" value="task" />
+        <div class="field">
+          <label for="repo">Repository name</label>
+          <input type="text" id="repo" name="repo" required maxlength="64" placeholder="my-project" />
         </div>
-        <span class={`badge badge-${t.status}`}>{t.status}</span>
-      </a>
-    ))}
+        <div class="field">
+          <label for="instructions">Instructions for agents</label>
+          <textarea id="instructions" name="instructions" required maxlength="2000" placeholder="Describe what the agents should build..."></textarea>
+        </div>
+        <div class="form-row-inline">
+          <div class="field">
+            <label for="agent_count">Agents (1-5)</label>
+            <input type="number" id="agent_count" name="agent_count" value="3" min="1" max="5" />
+          </div>
+          <div class="field">
+            <label for="project_id">Project (optional)</label>
+            <select id="project_id" name="project_id">
+              <option value="">No project (legacy)</option>
+              {projects.map((p) => (
+                <option value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Dispatch agents</button>
+      </form>
+    </section>
+
+    <section class="section" aria-label="Tasks">
+      <div class="section-head">
+        <h2>Tasks <span class="count">{tasks.length > 0 ? `(${tasks.length})` : ""}</span></h2>
+      </div>
+      {tasks.length === 0 && !error && (
+        <div class="empty">No tasks yet. Dispatch one above.</div>
+      )}
+      <div class="row-list">
+        {tasks.map((t) => (
+          <a href={`/tasks/${t.id}`} class="row">
+            <div class="row-main">
+              <div class="row-title">{t.repo}</div>
+              <div class="row-meta">
+                <span>{t.agent_count} {t.agent_count === 1 ? "agent" : "agents"}</span>
+                <span>{formatDate(t.created_at)}</span>
+                <span class="row-id">{t.id}</span>
+              </div>
+            </div>
+            <div class="row-side">
+              <span class={`badge badge-${t.status}`}>{t.status}</span>
+            </div>
+          </a>
+        ))}
+      </div>
+    </section>
   </div>
 </body>
 </html>
