@@ -247,6 +247,12 @@ export default {
     const mergeMatch = url.pathname.match(/^\/tasks\/([a-zA-Z0-9-]+)\/merge$/);
     if (request.method === "POST" && mergeMatch) {
       const taskId = mergeMatch[1];
+      // Optional human review comment, recorded in the ledger with the merge.
+      let reviewComment = "";
+      try {
+        const body = (await request.json().catch(() => ({}))) as { comment?: unknown };
+        reviewComment = String(body?.comment ?? "").trim().slice(0, 500);
+      } catch { /* no usable body */ }
       const winner = await env.LEDGER_DB.prepare(
         "SELECT id, agent_id, repo_name, commit_sha FROM forks WHERE task_id = ? AND status = 'approved' ORDER BY created_at ASC LIMIT 1"
       ).bind(taskId).first() as { id: string; agent_id: string; repo_name: string; commit_sha: string } | null;
@@ -267,7 +273,7 @@ export default {
         task_id: taskId,
         event_type: "task.merged",
         actor: "coordinator",
-        details: { winner_fork: winner.id, agent: winner.agent_id, repo: winner.repo_name },
+        details: { winner_fork: winner.id, agent: winner.agent_id, repo: winner.repo_name, ...(reviewComment ? { review_comment: reviewComment } : {}) },
       });
 
       return json({ merged: winner.repo_name, agent: winner.agent_id });
@@ -496,6 +502,12 @@ async function projectRemote(env: Env, projectId: string): Promise<Response> {
 // with decision trailers. Uses isomorphic-git with MemoryFS in the Worker.
 async function mergeReal(request: Request, env: Env, taskId: string): Promise<Response> {
   try {
+  // Optional human review comment, recorded in the ledger with the merge.
+  let reviewComment = "";
+  try {
+    const body = (await request.json().catch(() => ({}))) as { comment?: unknown };
+    reviewComment = String(body?.comment ?? "").trim().slice(0, 500);
+  } catch { /* no usable body */ }
   const task = await env.LEDGER_DB.prepare(
     "SELECT project_id FROM tasks WHERE id = ?"
   ).bind(taskId).first() as { project_id: string | null } | null;
@@ -582,6 +594,7 @@ async function mergeReal(request: Request, env: Env, taskId: string): Promise<Re
     details: {
       winner_fork: winner.id, agent: winner.agent_id,
       merge_commit: sha, project: project.repo_name, trailers,
+      ...(reviewComment ? { review_comment: reviewComment } : {}),
     },
   });
 
