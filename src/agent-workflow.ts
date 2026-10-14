@@ -152,15 +152,18 @@ export class AgentRunner extends WorkflowEntrypoint<Env, AgentParams> {
               { role: "user", content: userPrompt },
             ],
             response_format: { type: "json_object" },
-            max_tokens: 4000,
+            max_tokens: 16000,
             temperature: 0.7,
           }),
         });
         if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
         const data = await res.json() as {
-          choices: { message: { content: string } }[];
+          choices: { message: { content: string }; finish_reason?: string }[];
           usage?: { prompt_tokens: number; completion_tokens: number };
         };
+        if (data.choices[0].finish_reason === "length") {
+          throw new Error("LLM output hit the token limit; increase max_tokens");
+        }
         llmText = data.choices[0].message.content;
         inputTokens = data.usage?.prompt_tokens ?? 0;
         outputTokens = data.usage?.completion_tokens ?? 0;
@@ -175,7 +178,7 @@ export class AgentRunner extends WorkflowEntrypoint<Env, AgentParams> {
               contents: [{ parts: [{ text: userPrompt }] }],
               generationConfig: {
                 responseMimeType: "application/json",
-                maxOutputTokens: 4000,
+                maxOutputTokens: 16000,
                 temperature: 0.7,
               },
             }),
@@ -183,9 +186,12 @@ export class AgentRunner extends WorkflowEntrypoint<Env, AgentParams> {
         );
         if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
         const data = await res.json() as {
-          candidates: { content: { parts: { text: string }[] } }[];
+          candidates: { content: { parts: { text: string }[] }; finishReason?: string }[];
           usageMetadata?: { promptTokenCount: number; candidatesTokenCount: number };
         };
+        if (data.candidates[0].finishReason === "MAX_TOKENS") {
+          throw new Error("LLM output hit the token limit; increase maxOutputTokens");
+        }
         llmText = data.candidates[0].content.parts[0].text;
         inputTokens = data.usageMetadata?.promptTokenCount ?? 0;
         outputTokens = data.usageMetadata?.candidatesTokenCount ?? 0;
