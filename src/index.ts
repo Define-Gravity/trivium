@@ -63,7 +63,7 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/tasks") {
       const tasks = await env.LEDGER_DB.prepare(
-        "SELECT id, repo, status, budget_tokens, spent_tokens, created_at FROM tasks ORDER BY created_at DESC LIMIT 50"
+        "SELECT id, repo, status, budget_tokens, spent_tokens, project_id, created_at FROM tasks ORDER BY created_at DESC LIMIT 50"
       ).all();
       return json(tasks.results);
     }
