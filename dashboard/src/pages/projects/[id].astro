@@ -49,42 +49,65 @@ const gitCommand = remote
 </head>
 <body>
   <div class="container">
-    <header>
-      <div>
-        <p><a href="/" style="color: var(--muted);">&larr; All projects</a></p>
-        <h1>{project ? project.name : "Project"}</h1>
-        {project && <p class="task-meta">{project.repo_name} &middot; created {formatDate(project.created_at)}</p>}
-      </div>
+    <header class="site">
+      <a href="/" class="wordmark">Trivium</a>
+      <nav><a href="/settings">Settings</a></nav>
     </header>
 
-    {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
+    <div class="page-head">
+      <a class="crumb" href="/">&larr; All projects</a>
+      <h1>{project ? project.name : "Project"}</h1>
+      {project && (
+        <div class="meta-row">
+          <span class="mono">{project.repo_name}</span>
+          <span>Created {formatDate(project.created_at)}</span>
+        </div>
+      )}
+    </div>
+
+    {error && <div class="alert alert-error" role="alert">{error}</div>}
 
     {project && remote && (
-      <div class="card">
-        <h3 style="margin-top: 0;">Bootstrap this repo</h3>
-        <p style="color: var(--muted);">Push an existing repo into the project. Token expires in {Math.round(remote.expires_in / 60)} minutes; reload the page for a fresh one.</p>
-        <pre style="background: #111; padding: 1rem; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-all;"><code>{gitCommand}</code></pre>
-        <p class="task-meta">Remote: {remote.remote}</p>
-      </div>
+      <section class="section" aria-label="Bootstrap">
+        <div class="card">
+          <h3>Bootstrap this repo</h3>
+          <p style="color: var(--muted); margin-top: 0;">
+            Push an existing repo into the project. The token expires in {Math.round(remote.expires_in / 60)} minutes; reload the page for a fresh one.
+          </p>
+          <pre class="code"><code>{gitCommand}</code></pre>
+          <p class="event-meta" style="margin-top: 0.75rem; margin-bottom: 0;">
+            Remote: <span class="mono">{remote.remote}</span>
+          </p>
+        </div>
+      </section>
     )}
 
     {project && (
-      <>
-        <h2>Tasks in this project</h2>
+      <section class="section" aria-label="Project tasks">
+        <div class="section-head">
+          <h2>Tasks in this project <span class="count">{tasks.length > 0 ? `(${tasks.length})` : ""}</span></h2>
+        </div>
         {tasks.length === 0 && !error && (
-          <div class="card"><p style="color: var(--muted); margin: 0;">No tasks yet for this project.</p></div>
+          <div class="empty">No tasks yet for this project.</div>
         )}
-        {tasks.map((t) => (
-          <a href={`/tasks/${t.id}`} class="task-row" style="text-decoration: none; color: inherit; display: flex;">
-            <div>
-              <div><strong>{t.repo}</strong></div>
-              <div class="task-meta">{t.agent_count} agents &middot; {formatDate(t.created_at)}</div>
-              <div class="task-id">{t.id}</div>
-            </div>
-            <span class={`badge badge-${t.status}`}>{t.status}</span>
-          </a>
-        ))}
-      </>
+        <div class="row-list">
+          {tasks.map((t) => (
+            <a href={`/tasks/${t.id}`} class="row">
+              <div class="row-main">
+                <div class="row-title">{t.repo}</div>
+                <div class="row-meta">
+                  <span>{t.agent_count} {t.agent_count === 1 ? "agent" : "agents"}</span>
+                  <span>{formatDate(t.created_at)}</span>
+                  <span class="row-id">{t.id}</span>
+                </div>
+              </div>
+              <div class="row-side">
+                <span class={`badge badge-${t.status}`}>{t.status}</span>
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
     )}
   </div>
 </body>
