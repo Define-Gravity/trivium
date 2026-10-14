@@ -40,3 +40,9 @@ CREATE TABLE IF NOT EXISTS ledger (
 
 CREATE INDEX IF NOT EXISTS idx_ledger_task ON ledger(task_id, seq);
 CREATE INDEX IF NOT EXISTS idx_forks_task ON forks(task_id);
+
+-- Every event chains to exactly one predecessor, so (task_id, prev_hash)
+-- is unique in a healthy chain. The index turns a concurrent-append race
+-- into a loud constraint error (which appendLedger retries) instead of a
+-- silently broken chain.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_task_prev ON ledger(task_id, prev_hash);

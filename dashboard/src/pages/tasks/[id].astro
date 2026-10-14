@@ -49,6 +49,11 @@ try {
 
 const stages = ["pending", "running", "review", "completed"];
 const currentStage = task ? stages.indexOf(task.task.status) : -1;
+// Once agents are dispatched the run card stays hidden: re-running agents
+// on the same task is refused by the API, so the button must not reappear.
+const agentsDispatched = ledger
+  ? ledger.events.some((e: any) => e.event_type === "agent.started")
+  : false;
 const formatDate = (epoch: number) => new Date(epoch * 1000).toLocaleString();
 const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
 
@@ -173,7 +178,7 @@ if (ledger && task) {
           </div>
         )}
 
-        {task.task.status === "running" && task.forks.some((f: any) => f.status !== "completed") && (
+        {task.task.status === "running" && !agentsDispatched && task.forks.some((f: any) => f.status !== "completed") && (
           <div class="card">
             <h3>Run agents on Cloudflare</h3>
             {keyStatus && (keyStatus.openai.configured || keyStatus.gemini.configured) ? (

@@ -45,7 +45,7 @@ interface ImportRequest {
 
 const DEFAULT_BUDGET = 100000;
 const DEFAULT_AGENTS = 3;
-const TOKEN_TTL_SECONDS = 900; // 15 minutes per fork
+const TOKEN_TTL_SECONDS = 7200; // 2 hours per fork: agents need room for LLM latency and retries
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -686,6 +686,15 @@ async function runAgents(request: Request, env: Env, taskId: string): Promise<Re
     "SELECT status FROM tasks WHERE id = ?"
   ).bind(taskId).first() as { status: string } | null;
   if (!task) return json({ error: "task not found" }, 404);
+
+  // Refuse a second dispatch. Re-running agents on a task that already has
+  // them doubles spend and races the ledger. Create a new task to run again.
+  const alreadyDispatched = await env.LEDGER_DB.prepare(
+    "SELECT 1 FROM ledger WHERE task_id = ? AND event_type = 'agent.started' LIMIT 1"
+  ).bind(taskId).first();
+  if (alreadyDispatched) {
+    return json({ error: "agents already dispatched for this task; create a new task to run again" }, 409);
+  }
 
   const forks = await env.LEDGER_DB.prepare(
     "SELECT id, agent_id FROM forks WHERE task_id = ? AND status != 'completed'"
