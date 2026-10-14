@@ -18,10 +18,11 @@ let ledger: Awaited<ReturnType<ReturnType<typeof createApi>["getLedger"]>> | nul
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
   const action = String(form.get("action") ?? "");
+  const comment = String(form.get("comment") ?? "").trim().slice(0, 500);
   try {
     if (action === "review") await api.runReview(id);
-    if (action === "merge") await api.merge(id);
-    if (action === "merge-real") await api.mergeReal(id);
+    if (action === "merge") await api.merge(id, comment || undefined);
+    if (action === "merge-real") await api.mergeReal(id, comment || undefined);
     if (action === "run-agents") {
       const provider = String(form.get("provider") ?? "openai");
       if (provider !== "openai" && provider !== "gemini") throw new Error("invalid provider");
@@ -50,6 +51,55 @@ const stages = ["pending", "running", "review", "completed"];
 const currentStage = task ? stages.indexOf(task.task.status) : -1;
 const formatDate = (epoch: number) => new Date(epoch * 1000).toLocaleString();
 const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
+
+// Assemble per-fork review notes from the gate events in the ledger.
+// The gate also writes a signed copy of each note to the reviewed commit
+// as a git note (refs/notes/trivium/review).
+const reviewNotes: {
+  forkId: string; agentId: string; commitSha: string | null;
+  passed: boolean | null; findings: string[]; tier: string | null;
+  decision: string | null; reviewedAt: number | null;
+}[] = [];
+if (ledger && task) {
+  const byFork = new Map<string, {
+    forkId: string; passed: boolean | null; findings: string[];
+    tier: string | null; decision: string | null;
+    reviewedAt: number | null; commitSha: string | null;
+  }>();
+  const entry = (forkId: string) => {
+    if (!byFork.has(forkId)) {
+      byFork.set(forkId, { forkId, passed: null, findings: [], tier: null, decision: null, reviewedAt: null, commitSha: null });
+    }
+    return byFork.get(forkId)!;
+  };
+  for (const e of ledger.events) {
+    let d: any = {};
+    try { d = JSON.parse(e.details); } catch { /* not JSON, skip */ }
+    if (!d.forkId) continue;
+    if (e.event_type === "agent.completed" && d.commitSha) {
+      entry(d.forkId).commitSha = d.commitSha;
+    } else if (e.event_type === "gate.scans") {
+      const r = entry(d.forkId);
+      r.passed = d.passed ?? null;
+      r.findings = Array.isArray(d.findings) ? d.findings : [];
+      r.reviewedAt = e.created_at;
+    } else if (e.event_type === "gate.tier") {
+      entry(d.forkId).tier = d.tier ?? null;
+    } else if (e.event_type === "fork.approved") {
+      const r = entry(d.forkId); r.decision = "approved"; r.reviewedAt = e.created_at;
+    } else if (e.event_type === "fork.quarantined") {
+      const r = entry(d.forkId); r.decision = "quarantined"; r.reviewedAt = e.created_at;
+    } else if (e.event_type === "fork.escalated") {
+      const r = entry(d.forkId); r.decision = "awaiting_human"; r.reviewedAt = e.created_at;
+    }
+  }
+  for (const f of task.forks) {
+    const r = byFork.get(f.id);
+    if (r && (r.decision || r.passed !== null)) {
+      reviewNotes.push({ ...r, agentId: f.agent_id });
+    }
+  }
+}
 ---
 
 <html lang="en">
@@ -95,7 +145,7 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
         </ol>
 
         {task.task.status === "review" && (
-          <div class="action-bar">
+          <div class="action-bar" style="flex-direction: column; align-items: stretch;">
             <form method="POST">
               <input type="hidden" name="action" value="review" />
               <button type="submit" class="btn btn-primary">Run review gates</button>
@@ -103,11 +153,19 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
             {(task.task as any).project_id ? (
               <form method="POST">
                 <input type="hidden" name="action" value="merge-real" />
+                <div class="field">
+                  <label for="merge-comment">Review comment <span class="hint">Optional. Recorded in the ledger with the merge.</span></label>
+                  <input type="text" id="merge-comment" name="comment" maxlength="500" placeholder="Why is this merge approved?" />
+                </div>
                 <button type="submit" class="btn">Merge to main</button>
               </form>
             ) : (
               <form method="POST">
                 <input type="hidden" name="action" value="merge" />
+                <div class="field">
+                  <label for="merge-comment">Review comment <span class="hint">Optional. Recorded in the ledger with the merge.</span></label>
+                  <input type="text" id="merge-comment" name="comment" maxlength="500" placeholder="Why is this merge approved?" />
+                </div>
                 <button type="submit" class="btn">Merge winner</button>
               </form>
             )}
@@ -160,6 +218,62 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
             ))}
           </div>
         </section>
+
+        {reviewNotes.length > 0 && (
+          <section class="section" aria-label="Review notes">
+            <div class="section-head">
+              <h2>Review notes <span class="count">({reviewNotes.length})</span></h2>
+              <p>What the review gate found in each fork. A signed copy is also written to the reviewed commit as a git note.</p>
+            </div>
+            <div class="row-list">
+              {reviewNotes.map((n) => (
+                <div class="card" style="margin-bottom: 0;">
+                  <div class="fork-top">
+                    <span class="fork-agent">{n.agentId}</span>
+                    {n.decision && (
+                      <span class={`badge badge-${n.decision === "awaiting_human" ? "awaiting_human" : n.decision}`}>
+                        {n.decision === "awaiting_human" ? "awaiting human" : n.decision}
+                      </span>
+                    )}
+                  </div>
+                  <div class="kv">
+                    <div class="kv-row">
+                      <span class="kv-key">Scans</span>
+                      {n.passed === null
+                        ? <span class="kv-val missing">—</span>
+                        : n.passed
+                          ? <span class="kv-val ok">✓ Passed</span>
+                          : <span class="kv-val" style="color: var(--red);">✗ Failed</span>}
+                    </div>
+                    <div class="kv-row">
+                      <span class="kv-key">Risk tier</span>
+                      <span class="kv-val">{n.tier ?? "—"}</span>
+                    </div>
+                    {n.commitSha && (
+                      <div class="kv-row">
+                        <span class="kv-key">Commit</span>
+                        <span class="kv-val">{shortHash(n.commitSha)}</span>
+                      </div>
+                    )}
+                    {n.reviewedAt && (
+                      <div class="kv-row">
+                        <span class="kv-key">Reviewed</span>
+                        <span class="kv-val" style="font-family: var(--font-sans);">{formatDate(n.reviewedAt)}</span>
+                      </div>
+                    )}
+                  </div>
+                  {n.findings.length > 0 ? (
+                    <ul class="clean">
+                      {n.findings.map((f) => <li class="mono">{f}</li>)}
+                    </ul>
+                  ) : (
+                    <p class="event-meta" style="margin-bottom: 0;">No findings.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section class="section" aria-label="Audit ledger">
           <div class="section-head">
