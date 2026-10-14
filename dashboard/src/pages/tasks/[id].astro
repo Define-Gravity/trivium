@@ -60,53 +60,68 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
 </head>
 <body>
   <div class="container">
-    <header>
-      <div>
-        <h1><a href="/" style="color: inherit;">←</a> {task?.task.repo ?? "Task"}</h1>
-        <p>{task?.task.instructions}</p>
-      </div>
-      {task && <span class={`badge badge-${task.task.status}`}>{task.task.status}</span>}
+    <header class="site">
+      <a href="/" class="wordmark">Trivium</a>
+      <nav><a href="/settings">Settings</a></nav>
     </header>
 
-    {error && <div class="card" style="border-color: var(--red); color: var(--red);">{error}</div>}
+    <div class="page-head">
+      <a class="crumb" href="/">&larr; All tasks</a>
+      <div class="head-row">
+        <h1>{task?.task.repo ?? "Task"}</h1>
+        {task && <span class={`badge badge-${task.task.status}`}>{task.task.status}</span>}
+      </div>
+      {task && <p class="lede">{task.task.instructions}</p>}
+      {task && (
+        <div class="meta-row">
+          <span>{task.task.agent_count} {task.task.agent_count === 1 ? "agent" : "agents"}</span>
+          <span>Budget: <span class="mono">{task.task.budget_tokens.toLocaleString()}</span> tokens</span>
+          <span>Created {formatDate(task.task.created_at)}</span>
+        </div>
+      )}
+    </div>
+
+    {error && <div class="alert alert-error" role="alert">{error}</div>}
 
     {task && (
       <>
-        <div class="pipeline">
+        <ol class="stepper" aria-label="Pipeline progress">
           {stages.map((s, i) => (
-            <div class={`stage ${i === currentStage ? "active" : ""} ${i < currentStage ? "done" : ""}`}>
+            <li class={`step ${i === currentStage ? "active" : ""} ${i < currentStage ? "done" : ""}`} aria-current={i === currentStage ? "step" : undefined}>
+              <span class="pip">{i < currentStage ? "✓" : i + 1}</span>
               {s}
-            </div>
+            </li>
           ))}
-        </div>
+        </ol>
 
         {task.task.status === "review" && (
-          <div class="actions">
-            <form method="POST" style="display: inline;">
+          <div class="action-bar">
+            <form method="POST">
               <input type="hidden" name="action" value="review" />
               <button type="submit" class="btn btn-primary">Run review gates</button>
             </form>
             {(task.task as any).project_id ? (
-              <form method="POST" style="display: inline;">
+              <form method="POST">
                 <input type="hidden" name="action" value="merge-real" />
                 <button type="submit" class="btn">Merge to main</button>
               </form>
             ) : (
-              <form method="POST" style="display: inline;">
+              <form method="POST">
                 <input type="hidden" name="action" value="merge" />
                 <button type="submit" class="btn">Merge winner</button>
               </form>
             )}
+            <p class="note">Review gates scan each fork before anything merges.</p>
           </div>
         )}
 
         {task.task.status === "running" && task.forks.some((f: any) => f.status !== "completed") && (
-          <div class="card" style="margin-bottom: 1.5rem;">
-            <h3 style="margin-top: 0;">Run agents on Cloudflare</h3>
+          <div class="card">
+            <h3>Run agents on Cloudflare</h3>
             {keyStatus && (keyStatus.openai.configured || keyStatus.gemini.configured) ? (
-              <form method="POST" style="display: flex; gap: 0.75rem; align-items: end;">
+              <form method="POST" class="form-row-inline">
                 <input type="hidden" name="action" value="run-agents" />
-                <div class="form-row" style="margin: 0;">
+                <div class="field">
                   <label for="provider">Provider</label>
                   <select id="provider" name="provider">
                     {keyStatus.openai.configured && <option value="openai">OpenAI (gpt-4o-mini)</option>}
@@ -120,50 +135,57 @@ const shortHash = (h: string) => h.length > 16 ? h.slice(0, 16) + "..." : h;
                 No LLM keys configured. <a href="/settings">Add your API keys in Settings</a> to run agents on Cloudflare.
               </p>
             )}
-            <p class="task-meta" style="margin-top: 0.75rem; margin-bottom: 0;">
+            <p class="event-meta" style="margin-top: 0.75rem; margin-bottom: 0;">
               Each fork gets its own Workflow. Agents clone, call the LLM, commit with Trivium trailers, and push.
             </p>
           </div>
         )}
 
-        <h2>Agent forks ({task.forks.length})</h2>
-        <div class="fork-grid">
-          {task.forks.map((f) => (
-            <div class={`fork-card ${f.status === "merged" ? "winner" : ""}`}>
-              <h3>
-                {f.agent_id}
-                <span class={`badge badge-${f.status}`}>{f.status}</span>
-              </h3>
-              <p class="fork-detail">Repo: {f.repo_name}</p>
-              <p class="fork-detail">Token expires: {formatDate(f.token_expiry)}</p>
-              {f.completed_at && <p class="fork-detail">Completed: {formatDate(f.completed_at)}</p>}
-              {f.status === "merged" && <p style="color: var(--green); font-weight: 600;">✓ Selected</p>}
-            </div>
-          ))}
-        </div>
-
-        <h2>
-          Audit ledger
-          {ledger && (
-            <span class={`verify ${ledger.valid ? "ok" : "bad"}`} style="margin-left: 0.75rem;">
-              {ledger.valid ? "✓ chain valid" : "✗ chain broken"}
-            </span>
-          )}
-        </h2>
-        <div class="card">
-          <div class="timeline">
-            {ledger?.events.map((e) => (
-              <div class="event">
-                <div class="event-type">{e.event_type}</div>
-                <div class="event-meta">
-                  {e.actor} &middot; {formatDate(e.created_at)}
+        <section class="section" aria-label="Agent forks">
+          <div class="section-head">
+            <h2>Agent forks <span class="count">({task.forks.length})</span></h2>
+          </div>
+          <div class="fork-grid">
+            {task.forks.map((f) => (
+              <div class={`fork-card ${f.status === "merged" ? "winner" : ""}`}>
+                <div class="fork-top">
+                  <span class="fork-agent">{f.agent_id}</span>
+                  <span class={`badge badge-${f.status}`}>{f.status}</span>
                 </div>
-                <div class="event-meta">{e.details.slice(0, 160)}{e.details.length > 160 ? "..." : ""}</div>
-                <div class="event-hash">{shortHash(e.hash)}</div>
+                <p class="fork-detail">Repo <span class="mono">{f.repo_name}</span></p>
+                <p class="fork-detail">Token expires {formatDate(f.token_expiry)}</p>
+                {f.completed_at && <p class="fork-detail">Completed {formatDate(f.completed_at)}</p>}
+                {f.status === "merged" && <p class="fork-selected">✓ Selected</p>}
               </div>
             ))}
           </div>
-        </div>
+        </section>
+
+        <section class="section" aria-label="Audit ledger">
+          <div class="section-head">
+            <h2>
+              Audit ledger
+              {ledger && (
+                <span class={`verify ${ledger.valid ? "ok" : "bad"}`} style="margin-left: 0.6rem;">
+                  {ledger.valid ? "✓ chain valid" : "✗ chain broken"}
+                </span>
+              )}
+            </h2>
+            <p>Every event is hash-chained. If anyone edits history, the chain breaks.</p>
+          </div>
+          <div class="card">
+            <div class="timeline">
+              {ledger?.events.map((e) => (
+                <div class="event">
+                  <div class="event-type">{e.event_type}</div>
+                  <div class="event-meta">{e.actor} &middot; {formatDate(e.created_at)}</div>
+                  <div class="event-details">{e.details.slice(0, 160)}{e.details.length > 160 ? "..." : ""}</div>
+                  <div class="event-hash">{shortHash(e.hash)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       </>
     )}
   </div>
